@@ -1,0 +1,6 @@
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Opcional - para melhor suporte a sites com JavaScript:
+# selenium>=4.15.0
+# playwright>=1.40.0

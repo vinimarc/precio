@@ -1,1 +1,0 @@
-# tropa apaguei o readme me perdoa
