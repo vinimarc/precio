@@ -112,6 +112,26 @@ function cacheSet(string $key, array $data): void
         CACHE_DIR . '/' . md5($key) . '.json',
         json_encode($data, JSON_UNESCAPED_UNICODE)
     );
+
+    // PERF FIX: sem isso, o diretório de cache crescia indefinidamente —
+    // arquivos expirados só eram removidos se alguém buscasse exatamente
+    // aquela chave de novo. Faz limpeza probabilística (1 em ~20 escritas)
+    // para não pagar o custo de varrer o diretório em toda requisição.
+    if (random_int(1, 20) === 1) {
+        cacheGC();
+    }
+}
+
+function cacheGC(): void
+{
+    $arquivos = @glob(CACHE_DIR . '/*.json');
+    if (!$arquivos) return;
+    $agora = time();
+    foreach ($arquivos as $arquivo) {
+        if ($agora - (@filemtime($arquivo) ?: 0) > CACHE_TTL) {
+            @unlink($arquivo);
+        }
+    }
 }
 
 // ── REQUISIÇÃO HTTP com cURL ──────────────────────────────────────────────────
@@ -150,8 +170,18 @@ function curlMultiExec(array $handles): array
     $active = null;
     do {
         $status = curl_multi_exec($mh, $active);
-        if ($active) curl_multi_select($mh, 0.5);
-    } while ($active && $status === CURLM_OK);
+    } while ($status === CURLM_CALL_MULTI_PERFORM); // drena chamadas pendentes sem bloquear
+
+    while ($active && $status === CURLM_OK) {
+        // PERF FIX: curl_multi_select pode retornar -1 em alguns ambientes
+        // sem nunca relatar timeout; um pequeno usleep evita busy-loop nesse caso.
+        if (curl_multi_select($mh, 0.5) === -1) {
+            usleep(50000);
+        }
+        do {
+            $status = curl_multi_exec($mh, $active);
+        } while ($status === CURLM_CALL_MULTI_PERFORM);
+    }
 
     foreach ($handles as $key => $ch) {
         $results[$key] = [
@@ -484,11 +514,17 @@ function buscarProdutosMultisite(string $query): array
             }
         }
     }
-    // fallback Pichau via Jina se GraphQL falhou
+    // BUG FIX: o fallback antigo rodava o parser de markdown da Jina sobre o
+    // corpo da resposta do GraphQL (JSON), que nunca bate com o regex —
+    // o resultado real era "0 produtos da Pichau" sempre que o GraphQL falhava.
+    // Agora disparamos uma chamada real à Jina Reader para obter o markdown.
     if (empty($pichauData)) {
-        $fallback   = parsePichauMarkdown($responses['pichau']['body'] ?? '', 30);
-        // Reaproveita o markdown de KaBuM (já temos); para Pichau, faz chamada extra só se necessário
-        // Aqui: apenas usa o que temos para não bloquear
+        $fallback   = buscarViaJina(
+            'https://www.pichau.com.br/search?q=' . rawurlencode($query),
+            'pichau',
+            $query,
+            30
+        );
         $pichauData = $fallback['produtos'] ?? [];
     }
 

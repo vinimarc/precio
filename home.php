@@ -521,6 +521,13 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
                 <div class="navbar__avatar"><?= htmlspecialchars($initial) ?></div>
                 <span><?= htmlspecialchars($user['name']) ?></span>
             </div>
+            <button class="cart-trigger" id="cart-trigger" aria-label="Abrir carrinho">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+                    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                </svg>
+                <span class="cart-trigger__badge" id="cart-badge">0</span>
+            </button>
             <button class="theme-toggle theme-toggle--inline" id="theme-toggle-home" aria-label="Alternar modo escuro">
                 <span class="theme-toggle__icon" id="theme-icon-home">🌙</span>
             </button>
@@ -627,6 +634,56 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 
 </div><!-- /.page -->
 
+<!-- ── Carrinho ───────────────────────────────────────────────────────────────── -->
+<div class="cart-overlay" id="cart-overlay"></div>
+
+<aside class="cart-panel" id="cart-panel" aria-label="Carrinho de produtos">
+    <div class="cart-panel__header">
+        <span class="cart-panel__title">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+            </svg>
+            Carrinho
+            <span class="cart-panel__title-count" id="cart-panel-count">0</span>
+        </span>
+        <button class="cart-panel__close" id="cart-close" aria-label="Fechar carrinho">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+    </div>
+
+    <div class="cart-panel__body" id="cart-body">
+        <!-- Preenchido via JS -->
+    </div>
+
+    <div class="cart-panel__footer" id="cart-footer" style="display:none">
+        <div class="cart-summary">
+            <span class="cart-summary__label">Total estimado</span>
+            <span class="cart-summary__value" id="cart-total">R$ 0,00</span>
+        </div>
+        <span class="cart-summary__note">Soma dos preços encontrados na busca — confira o valor final em cada loja.</span>
+        <button class="cart-btn-viewall" id="cart-viewall">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            Ver todos produtos na loja
+        </button>
+        <button class="cart-btn-clear" id="cart-clear">Esvaziar carrinho</button>
+    </div>
+</aside>
+
+<div class="cart-toast" id="cart-toast">
+    <span class="cart-toast__icon">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+        </svg>
+    </span>
+    <span id="cart-toast-msg">Produto adicionado ao carrinho</span>
+</div>
+
 <script>
 (function() {
     var root = document.documentElement;
@@ -666,6 +723,262 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
     }
 });
 
+// ── Carrinho ──────────────────────────────────────────────────────────────────
+const Cart = (() => {
+    // Chave por usuário: cada conta tem seu próprio carrinho persistido no navegador.
+    const STORAGE_KEY = 'precio-cart-<?= htmlspecialchars(json_encode($user['id']), ENT_QUOTES) ?>';
+
+    function load() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function save(items) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+        } catch {
+            // localStorage indisponível (modo privado/quota) — carrinho funciona só na sessão atual
+        }
+    }
+
+    let items = load();
+
+    function getAll() {
+        return items;
+    }
+
+    function has(id) {
+        return items.some(item => item.id === id);
+    }
+
+    function add(produto) {
+        if (!produto || !produto.id || has(produto.id)) return false;
+        items.push(produto);
+        save(items);
+        return true;
+    }
+
+    function remove(id) {
+        const before = items.length;
+        items = items.filter(item => item.id !== id);
+        save(items);
+        return items.length !== before;
+    }
+
+    function clear() {
+        items = [];
+        save(items);
+    }
+
+    return { getAll, has, add, remove, clear };
+})();
+
+const cartTrigger   = document.getElementById('cart-trigger');
+const cartOverlay   = document.getElementById('cart-overlay');
+const cartPanel     = document.getElementById('cart-panel');
+const cartClose     = document.getElementById('cart-close');
+const cartBody      = document.getElementById('cart-body');
+const cartFooter    = document.getElementById('cart-footer');
+const cartBadge     = document.getElementById('cart-badge');
+const cartPanelCount= document.getElementById('cart-panel-count');
+const cartTotal     = document.getElementById('cart-total');
+const cartViewAllBtn= document.getElementById('cart-viewall');
+const cartClearBtn  = document.getElementById('cart-clear');
+const cartToast     = document.getElementById('cart-toast');
+const cartToastMsg  = document.getElementById('cart-toast-msg');
+
+function openCart() {
+    renderCartPanel();
+    cartOverlay.classList.add('open');
+    cartPanel.classList.add('open');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeCart() {
+    cartOverlay.classList.remove('open');
+    cartPanel.classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+cartTrigger.addEventListener('click', openCart);
+cartClose.addEventListener('click', closeCart);
+cartOverlay.addEventListener('click', closeCart);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && cartPanel.classList.contains('open')) closeCart();
+});
+
+function showToast(msg) {
+    cartToastMsg.textContent = msg;
+    cartToast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => cartToast.classList.remove('show'), 2200);
+}
+
+function renderCartBadge() {
+    const count = Cart.getAll().length;
+    cartBadge.textContent = count > 99 ? '99+' : String(count);
+    cartBadge.classList.toggle('show', count > 0);
+    cartPanelCount.textContent = String(count);
+}
+
+function renderCartPanel() {
+    const all = Cart.getAll();
+    renderCartBadge();
+
+    if (all.length === 0) {
+        cartBody.innerHTML = `
+            <div class="cart-empty">
+                <span class="cart-empty__icon">🛒</span>
+                <strong>Seu carrinho está vazio</strong>
+                <p>Pesquise um produto e clique em "Adicionar" para guardá-lo aqui e comparar depois.</p>
+            </div>
+        `;
+        cartFooter.style.display = 'none';
+        return;
+    }
+
+    cartFooter.style.display = 'flex';
+
+    let total = 0;
+    let temPrecoDesconhecido = false;
+
+    const itemsHtml = all.map(item => {
+        if (item.preco !== null && item.preco !== undefined) {
+            total += Number(item.preco);
+        } else {
+            temPrecoDesconhecido = true;
+        }
+
+        const imgHtml = item.imagem
+            ? `<img src="${escHtml(item.imagem)}" alt="${escHtml(item.nome)}" loading="lazy" onerror="this.style.display='none'">`
+            : `<span style="font-size:1.6rem">📦</span>`;
+        const precoTxt = item.preco !== null && item.preco !== undefined ? formatBRL(item.preco) : 'Ver preço no site';
+
+        return `
+            <div class="cart-item" data-id="${escHtml(item.id)}">
+                <div class="cart-item__img">${imgHtml}</div>
+                <div class="cart-item__body">
+                    ${item.loja ? `<span class="cart-item__store">${escHtml(item.loja)}</span>` : ''}
+                    <span class="cart-item__name">${escHtml(item.nome)}</span>
+                    <span class="cart-item__price">${precoTxt}</span>
+                </div>
+                <div class="cart-item__actions">
+                    <a class="cart-item__link" href="${escHtml(item.url)}" target="_blank" rel="noopener noreferrer" title="Ver na loja" aria-label="Ver na loja">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                        </svg>
+                    </a>
+                    <button class="cart-item__remove" data-remove-id="${escHtml(item.id)}" title="Remover" aria-label="Remover do carrinho">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    cartBody.innerHTML = `<div class="cart-items">${itemsHtml}</div>`;
+    cartTotal.textContent = formatBRL(total) + (temPrecoDesconhecido ? '+' : '');
+
+    // Remoção individual
+    cartBody.querySelectorAll('[data-remove-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.dataset.removeId;
+            // BUG FIX: o id é a própria URL do produto, que pode conter
+            // caracteres (?, &, :, /) inválidos em seletores CSS. Em vez de
+            // montar um seletor com a URL (via CSS.escape), sobe ao
+            // ancestral .cart-item diretamente.
+            const el = btn.closest('.cart-item');
+            Cart.remove(id);
+            syncAddCartButtons();
+            if (el) {
+                el.classList.add('removing');
+                el.addEventListener('animationend', () => renderCartPanel(), { once: true });
+            } else {
+                renderCartPanel();
+            }
+        });
+    });
+}
+
+// Sincroniza o estado visual (texto/cor) dos botões "Adicionar" nos cards de
+// resultado com o que já está no carrinho — útil após remover algo no painel.
+function syncAddCartButtons() {
+    document.querySelectorAll('.product-card__add-cart').forEach(btn => {
+        try {
+            const produto = JSON.parse(decodeURIComponent(atob(btn.dataset.produto)));
+            const inCart  = Cart.has(produto.id);
+            btn.classList.toggle('added', inCart);
+            btn.querySelector('.add-cart-label').textContent = inCart ? 'No carrinho' : 'Adicionar';
+        } catch {
+            /* ignora cards malformados */
+        }
+    });
+}
+
+function ligarBotoesCarrinho(scope) {
+    scope.querySelectorAll('.product-card__add-cart').forEach(btn => {
+        let produto;
+        try {
+            produto = JSON.parse(decodeURIComponent(atob(btn.dataset.produto)));
+        } catch {
+            return;
+        }
+
+        if (Cart.has(produto.id)) {
+            btn.classList.add('added');
+            btn.querySelector('.add-cart-label').textContent = 'No carrinho';
+        }
+
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (Cart.has(produto.id)) {
+                showToast('Esse produto já está no carrinho');
+                return;
+            }
+            const added = Cart.add(produto);
+            if (added) {
+                btn.classList.add('added');
+                btn.querySelector('.add-cart-label').textContent = 'No carrinho';
+                renderCartBadge();
+                showToast('Produto adicionado ao carrinho');
+            }
+        });
+    });
+}
+
+cartViewAllBtn.addEventListener('click', () => {
+    const all = Cart.getAll();
+    if (all.length === 0) return;
+
+    // Pop-up blockers costumam bloquear múltiplas chamadas de window.open em sequência.
+    // Abrimos o primeiro link diretamente (gesto do usuário) e avisamos sobre o restante.
+    all.forEach((item, i) => {
+        const win = window.open(item.url, '_blank', 'noopener,noreferrer');
+        if (!win && i > 0) {
+            showToast('Seu navegador bloqueou algumas abas. Permita pop-ups para abrir todos os produtos.');
+        }
+    });
+});
+
+cartClearBtn.addEventListener('click', () => {
+    if (Cart.getAll().length === 0) return;
+    Cart.clear();
+    renderCartPanel();
+    syncAddCartButtons();
+    showToast('Carrinho esvaziado');
+});
+
+renderCartBadge();
+
 // ── Search ────────────────────────────────────────────────────────────────────
 const searchInput    = document.getElementById('search-input');
 const searchBtn      = document.getElementById('search-btn');
@@ -685,6 +998,12 @@ function escHtml(str) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+// Gera um ID estável para o produto a partir da URL (identificador mais
+// confiável que temos vindo do scraping — nome pode repetir, URL não).
+function productId(p) {
+    return String(p.url || p.nome || '').trim();
 }
 
 function mostrarLoading() {
@@ -790,14 +1109,24 @@ function mostrarResultados(data, tempo, doCache) {
                <span style="display:none;font-size:2.5rem">📦</span>`
             : `<span style="font-size:2.5rem">📦</span>`;
 
+        // Produto serializado em base64 para o botão de carrinho (evita escapar JSON dentro de atributo HTML)
+        const produtoData = btoa(encodeURIComponent(JSON.stringify({
+            id:     productId(p),
+            nome:   p.nome,
+            preco:  p.preco ?? null,
+            imagem: p.imagem || '',
+            url:    p.url,
+            loja:   p.loja || ''
+        })));
+
         html += `
-            <a class="product-card" style="animation-delay:${Math.min(index * 22, 420)}ms" href="${escHtml(p.url)}" target="_blank" rel="noopener noreferrer">
-                <div class="product-card__img">${imgHtml}</div>
+            <div class="product-card" style="animation-delay:${Math.min(index * 22, 420)}ms; cursor:default;">
+                <a class="product-card__img" href="${escHtml(p.url)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">${imgHtml}</a>
                 <div class="product-card__body">
                     <div>
                         ${p.loja ? `<span class="product-card__store">${escHtml(p.loja)}</span>` : ''}
                         ${isBest ? `<span class="product-card__best">Melhor preço</span>` : ''}
-                        <div class="product-card__name">${escHtml(p.nome)}</div>
+                        <a class="product-card__name" href="${escHtml(p.url)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;color:inherit;">${escHtml(p.nome)}</a>
                     </div>
                     <div class="product-card__pricing">
                         ${precoOrig ? `<div class="product-card__orig">${precoOrig}</div>` : ''}
@@ -807,9 +1136,18 @@ function mostrarResultados(data, tempo, doCache) {
                         </div>
                         ${!p.em_estoque ? `<span class="product-card__out">Sem estoque</span>` : ''}
                     </div>
-                    <span class="product-card__cta">Ver na loja →</span>
+                    <div class="product-card__actions">
+                        <a class="product-card__cta" href="${escHtml(p.url)}" target="_blank" rel="noopener noreferrer">Ver na loja →</a>
+                        <button class="product-card__add-cart" type="button" data-produto="${produtoData}">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+                                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                            </svg>
+                            <span class="add-cart-label">Adicionar</span>
+                        </button>
+                    </div>
                 </div>
-            </a>
+            </div>
         `;
     }
 
@@ -818,6 +1156,8 @@ function mostrarResultados(data, tempo, doCache) {
     resultsSection.style.display = 'block';
     resultsSection.innerHTML = html;
     resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    ligarBotoesCarrinho(resultsSection);
 }
 
 async function realizarBusca() {
