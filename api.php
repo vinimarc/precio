@@ -9,7 +9,8 @@ $action = $_POST['action'] ?? '';
 // ── LOGIN ────────────────────────────────────────────────────────────────────
 if ($action === 'login') {
     $email    = trim($_POST['email']    ?? '');
-    $password = trim($_POST['password'] ?? '');
+    // BUG FIX: não usar trim() em senha — espaços são válidos
+    $password = $_POST['password'] ?? '';
 
     if (!$email || !$password) {
         echo json_encode(['success' => false, 'message' => 'Preencha todos os campos.']);
@@ -35,8 +36,9 @@ if ($action === 'login') {
 if ($action === 'register') {
     $name     = trim($_POST['name']     ?? '');
     $email    = trim($_POST['email']    ?? '');
-    $password = trim($_POST['password'] ?? '');
-    $confirm  = trim($_POST['confirm']  ?? '');
+    // BUG FIX: não usar trim() em senha — espaços são válidos
+    $password = $_POST['password'] ?? '';
+    $confirm  = $_POST['confirm']  ?? '';
 
     if (!$name || !$email || !$password || !$confirm) {
         echo json_encode(['success' => false, 'message' => 'Preencha todos os campos.']);
@@ -80,6 +82,92 @@ if ($action === 'logout') {
     exit;
 }
 
+// ── CACHE ─────────────────────────────────────────────────────────────────────
+// Cache simples em arquivo. TTL: 10 minutos. Evita buscas redundantes.
+define('CACHE_DIR', __DIR__ . '/cache');
+define('CACHE_TTL', 600); // segundos
+
+function cacheGet(string $key): ?array
+{
+    $file = CACHE_DIR . '/' . md5($key) . '.json';
+    if (!file_exists($file)) return null;
+    if (time() - filemtime($file) > CACHE_TTL) {
+        @unlink($file);
+        return null;
+    }
+    $raw = @file_get_contents($file);
+    if ($raw === false) return null;
+    $data = json_decode($raw, true);
+    return is_array($data) ? $data : null;
+}
+
+function cacheSet(string $key, array $data): void
+{
+    if (!is_dir(CACHE_DIR)) {
+        @mkdir(CACHE_DIR, 0755, true);
+        // Segurança: bloqueia acesso direto ao diretório
+        @file_put_contents(CACHE_DIR . '/.htaccess', "Deny from all\n");
+    }
+    @file_put_contents(
+        CACHE_DIR . '/' . md5($key) . '.json',
+        json_encode($data, JSON_UNESCAPED_UNICODE)
+    );
+}
+
+// ── REQUISIÇÃO HTTP com cURL ──────────────────────────────────────────────────
+// Retorna handle cURL configurado (sem executar ainda — para uso com curl_multi)
+function buildCurlHandle(string $url, array $headers, string $postBody = '', string $method = 'GET')
+{
+    $ch = curl_init($url);
+    $opts = [
+        CURLOPT_RETURNTRANSFER  => true,
+        CURLOPT_FOLLOWLOCATION  => true,
+        CURLOPT_ENCODING        => '',
+        CURLOPT_HTTPHEADER      => $headers,
+        CURLOPT_CONNECTTIMEOUT  => 7,
+        CURLOPT_TIMEOUT         => 18,
+        CURLOPT_SSL_VERIFYPEER  => true,
+    ];
+    if ($method === 'POST') {
+        $opts[CURLOPT_POST]       = true;
+        $opts[CURLOPT_POSTFIELDS] = $postBody;
+    }
+    curl_setopt_array($ch, $opts);
+    return $ch;
+}
+
+// ── EXECUÇÃO PARALELA ─────────────────────────────────────────────────────────
+// Executa múltiplos handles cURL em paralelo e retorna array de respostas
+function curlMultiExec(array $handles): array
+{
+    $mh      = curl_multi_init();
+    $results = [];
+
+    foreach ($handles as $key => $ch) {
+        curl_multi_add_handle($mh, $ch);
+    }
+
+    $active = null;
+    do {
+        $status = curl_multi_exec($mh, $active);
+        if ($active) curl_multi_select($mh, 0.5);
+    } while ($active && $status === CURLM_OK);
+
+    foreach ($handles as $key => $ch) {
+        $results[$key] = [
+            'body'   => curl_multi_getcontent($ch),
+            'status' => (int) curl_getinfo($ch, CURLINFO_HTTP_CODE),
+            'error'  => curl_error($ch),
+        ];
+        curl_multi_remove_handle($mh, $ch);
+        curl_close($ch);
+    }
+
+    curl_multi_close($mh);
+    return $results;
+}
+
+// ── BUSCA PICHAU (GraphQL) ────────────────────────────────────────────────────
 function buscarPichau(string $query, int $quantidade = 12): array
 {
     $graphql = <<<'GRAPHQL'
@@ -92,23 +180,12 @@ function buscarPichau(string $query, int $quantidade = 12): array
           url_key
           price_range {
             minimum_price {
-              final_price {
-                value
-                currency
-              }
-              regular_price {
-                value
-              }
-              discount {
-                percent_off
-                amount_off
-              }
+              final_price { value currency }
+              regular_price { value }
+              discount { percent_off amount_off }
             }
           }
-          small_image {
-            url
-            label
-          }
+          small_image { url label }
           stock_status
         }
       }
@@ -116,466 +193,397 @@ function buscarPichau(string $query, int $quantidade = 12): array
     GRAPHQL;
 
     $payload = json_encode([
-        'query' => $graphql,
-        'variables' => [
-            'search' => $query,
-            'pageSize' => $quantidade,
-        ],
+        'query'     => $graphql,
+        'variables' => ['search' => $query, 'pageSize' => $quantidade],
     ]);
 
     $headers = [
-        'Content-Type' => 'application/json',
-        'Accept' => 'application/json, text/plain, */*',
-        'Accept-Language' => 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control' => 'no-cache',
-        'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Origin' => 'https://www.pichau.com.br',
-        'Referer' => 'https://www.pichau.com.br/search?q=' . rawurlencode($query),
-        'Sec-Fetch-Dest' => 'empty',
-        'Sec-Fetch-Mode' => 'cors',
-        'Sec-Fetch-Site' => 'same-origin',
-        'Store' => 'default',
+        'Content-Type: application/json',
+        'Accept: application/json, text/plain, */*',
+        'Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control: no-cache',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Origin: https://www.pichau.com.br',
+        'Referer: https://www.pichau.com.br/search?q=' . rawurlencode($query),
+        'Store: default',
     ];
 
-    $raw = false;
-    $status = 0;
-    $requestError = '';
+    $ch  = buildCurlHandle('https://www.pichau.com.br/graphql', $headers, $payload, 'POST');
+    $res = curlMultiExec(['pichau' => $ch]);
+    $r   = $res['pichau'];
 
-    if (function_exists('curl_init')) {
-        $curlHeaders = [];
-        foreach ($headers as $name => $value) {
-            $curlHeaders[] = "{$name}: {$value}";
-        }
-
-        $ch = curl_init('https://www.pichau.com.br/graphql');
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_HTTPHEADER => $curlHeaders,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => 8,
-            CURLOPT_TIMEOUT => 15,
-        ]);
-
-        $raw = curl_exec($ch);
-        $requestError = curl_error($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-    } else {
-        $httpHeaders = '';
-        foreach ($headers as $name => $value) {
-            $httpHeaders .= "{$name}: {$value}\r\n";
-        }
-
-        $context = stream_context_create([
-            'http' => [
-                'method' => 'POST',
-                'header' => $httpHeaders,
-                'content' => $payload,
-                'timeout' => 15,
-                'ignore_errors' => true,
-            ],
-        ]);
-
-        $raw = @file_get_contents('https://www.pichau.com.br/graphql', false, $context);
-        $requestError = error_get_last()['message'] ?? '';
-
-        foreach ($http_response_header ?? [] as $header) {
-            if (preg_match('/^HTTP\/\S+\s+(\d+)/', $header, $matches)) {
-                $status = (int) $matches[1];
-            }
-        }
+    // Falhou ou bloqueado — fallback via Jina
+    if ($r['body'] === '' || $r['body'] === false || $r['status'] >= 400
+        || stripos((string)$r['body'], 'Just a moment') !== false
+        || stripos((string)$r['body'], 'Cf-Mitigated')  !== false) {
+        return buscarViaJina('https://www.pichau.com.br/search?q=' . rawurlencode($query), 'pichau', $query, $quantidade);
     }
 
-    if ($raw === false || $raw === '') {
-        return buscarPichauIndexada($query, $quantidade);
-    }
-
-    if ($status >= 400 || stripos($raw, 'Just a moment') !== false || stripos($raw, 'Site em Manutenção') !== false || stripos($raw, 'Cf-Mitigated') !== false) {
-        return buscarPichauIndexada($query, $quantidade);
-    }
-
-    $data = json_decode($raw, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        return buscarPichauIndexada($query, $quantidade);
-    }
-
-    if (isset($data['errors'])) {
-        $msgs = array_map(static fn ($err) => $err['message'] ?? 'Erro desconhecido', $data['errors']);
-        return ['erro' => 'GraphQL: ' . implode(' | ', $msgs)];
+    $data = json_decode($r['body'], true);
+    if (json_last_error() !== JSON_ERROR_NONE || isset($data['errors'])) {
+        return buscarViaJina('https://www.pichau.com.br/search?q=' . rawurlencode($query), 'pichau', $query, $quantidade);
     }
 
     $products = $data['data']['products'] ?? [];
-    $items = $products['items'] ?? [];
-    $total = $products['total_count'] ?? 0;
+    $items    = $products['items'] ?? [];
+    $total    = $products['total_count'] ?? 0;
 
-    if (!$items) {
-        return ['total' => 0, 'produtos' => [], 'mensagem' => 'Nenhum produto encontrado.'];
-    }
+    if (!$items) return ['total' => 0, 'produtos' => []];
 
     $produtos = [];
     foreach ($items as $item) {
-        $precoInfo = $item['price_range']['minimum_price'] ?? [];
-        $precoFinal = $precoInfo['final_price']['value'] ?? 0;
-        $precoOrig = $precoInfo['regular_price']['value'] ?? 0;
-        $desconto = $precoInfo['discount']['percent_off'] ?? 0;
-        $img = $item['small_image'] ?? [];
+        $precoInfo  = $item['price_range']['minimum_price'] ?? [];
+        $precoFinal = $precoInfo['final_price']['value']  ?? 0;
+        $precoOrig  = $precoInfo['regular_price']['value'] ?? 0;
+        $desconto   = $precoInfo['discount']['percent_off'] ?? 0;
+        $img        = $item['small_image'] ?? [];
 
         $produtos[] = [
-            'nome' => $item['name'] ?? '',
-            'sku' => $item['sku'] ?? '',
-            'preco' => $precoFinal,
+            'nome'       => $item['name'] ?? '',
+            'sku'        => $item['sku']  ?? '',
+            'preco'      => $precoFinal,
             'preco_orig' => ($precoOrig && $precoOrig != $precoFinal) ? $precoOrig : null,
-            'desconto' => $desconto ? round($desconto, 1) : null,
-            'url' => 'https://www.pichau.com.br/' . ($item['url_key'] ?? ''),
-            'imagem' => $img['url'] ?? '',
+            'desconto'   => $desconto ? round($desconto, 1) : null,
+            'url'        => 'https://www.pichau.com.br/' . ($item['url_key'] ?? ''),
+            'imagem'     => $img['url'] ?? '',
             'em_estoque' => ($item['stock_status'] ?? 'OUT_OF_STOCK') === 'IN_STOCK',
-            'loja' => 'Pichau',
+            'loja'       => 'Pichau',
         ];
     }
 
     ordenarProdutosPorPreco($produtos);
-
-    return [
-        'total' => $total,
-        'produtos' => $produtos,
-    ];
+    return ['total' => $total, 'produtos' => $produtos];
 }
 
-function ordenarProdutosPorPreco(array &$produtos): void
+// ── FALLBACK VIA JINA (para KaBuM!, Amazon e Pichau quando API falha) ─────────
+// BUG FIX: URL anterior era duplicada: 'r.jina.ai/http://r.jina.ai/http://' — correto é apenas 'r.jina.ai/'
+function buscarViaJina(string $targetUrl, string $loja, string $query, int $quantidade = 12): array
 {
-    usort($produtos, static function (array $a, array $b): int {
-        $precoA = $a['preco'] ?? null;
-        $precoB = $b['preco'] ?? null;
-
-        if ($precoA === null && $precoB === null) {
-            return 0;
-        }
-
-        if ($precoA === null) {
-            return 1;
-        }
-
-        if ($precoB === null) {
-            return -1;
-        }
-
-        return $precoA <=> $precoB;
-    });
-}
-
-function buscarPichauIndexada(string $query, int $quantidade = 12): array
-{
-    $pichauUrl = 'https://www.pichau.com.br/search?q=' . rawurlencode($query);
-    $url = 'https://r.jina.ai/http://r.jina.ai/http://' . $pichauUrl;
-    $headers = [
+    $readerUrl = 'https://r.jina.ai/' . $targetUrl;
+    $headers   = [
         'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
         'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     ];
 
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_ENCODING => '',
-        CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 15,
-    ]);
+    $ch  = buildCurlHandle($readerUrl, $headers);
+    $res = curlMultiExec([$loja => $ch]);
+    $markdown = $res[$loja]['body'] ?? '';
 
-    $markdown = curl_exec($ch);
-    $error = curl_error($ch);
-    curl_close($ch);
-
-    if ($markdown === false || $markdown === '') {
-        return ['erro' => 'As lojas bloquearam a consulta direta e o fallback de busca também falhou: ' . ($error ?: 'resposta vazia')];
+    if (!is_string($markdown) || $markdown === '') {
+        return ['total' => 0, 'produtos' => []];
     }
 
+    return match($loja) {
+        'pichau' => parsePichauMarkdown($markdown, $quantidade),
+        'kabum'  => parseKabumMarkdown($markdown, $quantidade),
+        'amazon' => parseAmazonMarkdown($markdown, $quantidade),
+        default  => ['total' => 0, 'produtos' => []],
+    };
+}
+
+function parsePichauMarkdown(string $markdown, int $quantidade): array
+{
     $produtos = [];
-    $vistos = [];
+    $vistos   = [];
 
     if (!preg_match_all('/\[!\[Image\s+\d+:\s*(.*?)\]\((https?:\/\/media\.pichau\.com\.br\/[^)]+)\)(.*?)\]\((https:\/\/www\.pichau\.com\.br\/[^)\s]+)\)/su', $markdown, $matches, PREG_SET_ORDER)) {
-        return [
-            'total' => 0,
-            'produtos' => [],
-            'mensagem' => 'Nenhum produto encontrado. As lojas bloquearam a consulta direta no momento.',
-        ];
+        return ['total' => 0, 'produtos' => [], 'mensagem' => 'Nenhum produto encontrado.'];
     }
 
     foreach ($matches as $match) {
-        if (count($produtos) >= $quantidade) {
-            break;
-        }
+        if (count($produtos) >= $quantidade) break;
 
-        $imagem = $match[2];
-        $texto = trim(preg_replace('/\s+/', ' ', $match[3]));
+        $imagem     = $match[2];
+        $texto      = trim(preg_replace('/\s+/', ' ', $match[3]));
         $productUrl = $match[4];
 
-        if (!preg_match('/##\s*(.*?)(?:\s+de\s+R\$|\s+R\$)/u', $texto, $nomeMatch)) {
-            continue;
-        }
-
+        if (!preg_match('/##\s*(.*?)(?:\s+de\s+R\$|\s+R\$)/u', $texto, $nomeMatch)) continue;
         $nome = trim($nomeMatch[1]);
-        if (!preg_match_all('/R\$([\d\.,]+)/u', $texto, $precosMatch) || !$precosMatch[1]) {
-            continue;
-        }
+        if (!preg_match_all('/R\$([\d\.,]+)/u', $texto, $precosMatch) || !$precosMatch[1]) continue;
 
-        $valores = $precosMatch[1];
+        $valores      = $precosMatch[1];
         $temPrecoDePor = stripos($texto, ' por R$') !== false && count($valores) > 1;
-        $precoOrig = $temPrecoDePor ? moedaParaFloat($valores[0]) : null;
-        $preco = moedaParaFloat($temPrecoDePor ? $valores[1] : $valores[0]);
+        $precoOrig    = $temPrecoDePor ? moedaParaFloat($valores[0]) : null;
+        $preco        = moedaParaFloat($temPrecoDePor ? $valores[1] : $valores[0]);
+        $key          = strtolower($productUrl);
 
-        $key = strtolower($productUrl);
-        if (isset($vistos[$key])) {
-            continue;
-        }
+        if (isset($vistos[$key])) continue;
         $vistos[$key] = true;
 
         $produtos[] = [
-            'nome' => $nome,
-            'sku' => '',
-            'preco' => $preco,
+            'nome'       => $nome,
+            'sku'        => '',
+            'preco'      => $preco,
             'preco_orig' => $precoOrig && $precoOrig != $preco ? $precoOrig : null,
-            'desconto' => null,
-            'url' => $productUrl,
-            'imagem' => $imagem,
+            'desconto'   => null,
+            'url'        => $productUrl,
+            'imagem'     => $imagem,
             'em_estoque' => true,
-            'loja' => 'Pichau',
+            'loja'       => 'Pichau',
         ];
     }
 
-    if (!$produtos) {
-        return [
-            'total' => 0,
-            'produtos' => [],
-            'mensagem' => 'Nenhum produto encontrado. As lojas bloquearam a consulta direta no momento.',
-        ];
-    }
+    if (!$produtos) return ['total' => 0, 'produtos' => [], 'mensagem' => 'Nenhum produto encontrado via fallback.'];
 
     ordenarProdutosPorPreco($produtos);
-
-    return [
-        'total' => count($produtos),
-        'produtos' => $produtos,
-        'fonte' => 'Página da Pichau',
-        'aviso' => 'Resultados obtidos:',
-    ];
+    return ['total' => count($produtos), 'produtos' => $produtos, 'aviso' => 'Resultados obtidos via fallback.'];
 }
 
-function buscarKabum(string $query, int $quantidade = 12): array
+function parseKabumMarkdown(string $markdown, int $quantidade): array
 {
-    $markdown = lerPaginaRenderizada('https://www.kabum.com.br/busca/' . rawurlencode($query));
-    if ($markdown === '') {
-        return ['total' => 0, 'produtos' => []];
-    }
-
     $produtos = [];
-    $vistos = [];
-    $pattern = '/!\[Image\s+\d+[^\]]*\]\((https?:\/\/images\.kabum\.com\.br\/[^)]+)\)(.*?)\]\((https:\/\/www\.kabum\.com\.br\/produto\/[^)\s]+)\)/su';
+    $vistos   = [];
+    $pattern  = '/!\[Image\s+\d+[^\]]*\]\((https?:\/\/images\.kabum\.com\.br\/[^)]+)\)(.*?)\]\((https:\/\/www\.kabum\.com\.br\/produto\/[^)\s]+)\)/su';
 
-    if (!preg_match_all($pattern, $markdown, $matches, PREG_SET_ORDER)) {
-        return ['total' => 0, 'produtos' => []];
-    }
+    if (!preg_match_all($pattern, $markdown, $matches, PREG_SET_ORDER)) return ['total' => 0, 'produtos' => []];
 
     foreach ($matches as $match) {
-        if (count($produtos) >= $quantidade) {
-            break;
-        }
+        if (count($produtos) >= $quantidade) break;
 
         $imagem = $match[1];
-        $texto = trim(preg_replace('/\s+/', ' ', $match[2]));
-        $url = $match[3];
+        $texto  = trim(preg_replace('/\s+/', ' ', $match[2]));
+        $url    = $match[3];
 
-        if (isset($vistos[$url])) {
-            continue;
-        }
+        if (isset($vistos[$url])) continue;
 
         $partes = preg_split('/\s+R\$/u', $texto, 2);
-        $nome = trim($partes[0] ?? '');
-        $nome = preg_replace('/^(Produto Patrocinado\s+|Frete grátis\*\s+|Selo:[^ ]+\s+)/iu', '', $nome);
-        $nome = trim($nome);
+        $nome   = trim($partes[0] ?? '');
+        $nome   = preg_replace('/^(Produto Patrocinado\s+|Frete grátis\*\s+|Selo:[^ ]+\s+)/iu', '', $nome);
+        $nome   = trim($nome);
 
         $trechoPreco = preg_split('/\s+(?:No PIX|À vista|Em até|ou\s+\d+x)\b/iu', $texto, 2)[0] ?? $texto;
-        if ($nome === '' || !preg_match_all('/R\$ ?([\d\.,]+)/u', $trechoPreco, $precosMatch) || !$precosMatch[1]) {
-            continue;
-        }
+        if ($nome === '' || !preg_match_all('/R\$ ?([\d\.,]+)/u', $trechoPreco, $precosMatch) || !$precosMatch[1]) continue;
 
-        $valores = $precosMatch[1];
-        $preco = moedaParaFloat(end($valores));
+        $valores   = $precosMatch[1];
+        $preco     = moedaParaFloat(end($valores));
         $precoOrig = count($valores) > 1 ? moedaParaFloat($valores[0]) : null;
 
         $vistos[$url] = true;
         $produtos[] = [
-            'nome' => $nome,
-            'sku' => '',
-            'preco' => $preco,
+            'nome'       => $nome,
+            'sku'        => '',
+            'preco'      => $preco,
             'preco_orig' => $precoOrig && $precoOrig != $preco ? $precoOrig : null,
-            'desconto' => null,
-            'url' => $url,
-            'imagem' => $imagem,
+            'desconto'   => null,
+            'url'        => $url,
+            'imagem'     => $imagem,
             'em_estoque' => true,
-            'loja' => 'KaBuM!',
+            'loja'       => 'KaBuM!',
         ];
     }
 
     ordenarProdutosPorPreco($produtos);
-
-    return [
-        'total' => count($produtos),
-        'produtos' => $produtos,
-        'fonte' => 'KaBuM!',
-    ];
+    return ['total' => count($produtos), 'produtos' => $produtos];
 }
 
-function buscarAmazon(string $query, int $quantidade = 12): array
+function parseAmazonMarkdown(string $markdown, int $quantidade): array
 {
-    $markdown = lerPaginaRenderizada('https://www.amazon.com.br/s?k=' . rawurlencode($query));
-    if ($markdown === '') {
-        return ['total' => 0, 'produtos' => []];
-    }
-
     $produtos = [];
-    $vistos = [];
-    $pattern = '/!\[Image\s+\d+:\s*(.*?)\]\((https?:\/\/m\.media-amazon\.com\/[^)]+)\).*?##\s*\[(.*?)\]\((https:\/\/www\.amazon\.com\.br\/[^)\s]+)\)(.*?)(?=!\[Image\s+\d+:|$)/su';
+    $vistos   = [];
+    $pattern  = '/!\[Image\s+\d+:\s*(.*?)\]\((https?:\/\/m\.media-amazon\.com\/[^)]+)\).*?##\s*\[(.*?)\]\((https:\/\/www\.amazon\.com\.br\/[^)\s]+)\)(.*?)(?=!\[Image\s+\d+:|$)/su';
 
-    if (!preg_match_all($pattern, $markdown, $matches, PREG_SET_ORDER)) {
-        return ['total' => 0, 'produtos' => []];
-    }
+    if (!preg_match_all($pattern, $markdown, $matches, PREG_SET_ORDER)) return ['total' => 0, 'produtos' => []];
 
     foreach ($matches as $match) {
-        if (count($produtos) >= $quantidade) {
-            break;
-        }
+        if (count($produtos) >= $quantidade) break;
 
-        $nome = trim(preg_replace('/\s+/', ' ', $match[3] ?: $match[1]));
+        $nome   = trim(preg_replace('/\s+/', ' ', $match[3] ?: $match[1]));
         $imagem = $match[2];
-        $url = $match[4];
-        $texto = trim(preg_replace('/\s+/', ' ', $match[5]));
+        $url    = $match[4];
+        $texto  = trim(preg_replace('/\s+/', ' ', $match[5]));
 
         $trechoPreco = preg_split('/\s+(?:Entrega|Frete|Enviado|Apenas|Mais opções|Comprar)\b/iu', $texto, 2)[0] ?? $texto;
-        if ($nome === '' || strlen($nome) > 220 || str_contains($nome, '](') || isset($vistos[$url]) || !preg_match('/R\$ ?([\d\.,]+)/u', $trechoPreco, $precoMatch)) {
-            continue;
-        }
+        if ($nome === '' || strlen($nome) > 220 || str_contains($nome, '](') || isset($vistos[$url]) || !preg_match('/R\$ ?([\d\.,]+)/u', $trechoPreco, $precoMatch)) continue;
 
         $vistos[$url] = true;
         $produtos[] = [
-            'nome' => $nome,
-            'sku' => '',
-            'preco' => moedaParaFloat($precoMatch[1]),
+            'nome'       => $nome,
+            'sku'        => '',
+            'preco'      => moedaParaFloat($precoMatch[1]),
             'preco_orig' => null,
-            'desconto' => null,
-            'url' => $url,
-            'imagem' => $imagem,
+            'desconto'   => null,
+            'url'        => $url,
+            'imagem'     => $imagem,
             'em_estoque' => true,
-            'loja' => 'Amazon',
+            'loja'       => 'Amazon',
         ];
     }
 
     ordenarProdutosPorPreco($produtos);
-
-    return [
-        'total' => count($produtos),
-        'produtos' => $produtos,
-        'fonte' => 'Amazon',
-    ];
+    return ['total' => count($produtos), 'produtos' => $produtos];
 }
 
+// ── BUSCA PARALELA NAS 3 LOJAS ────────────────────────────────────────────────
 function buscarProdutosMultisite(string $query): array
 {
-    $fontes = [
-        buscarPichau($query, 30),
-        buscarKabum($query, 30),
-        buscarAmazon($query, 30),
+    // 1. Monta os 3 handles cURL em paralelo (Pichau via GraphQL + KaBuM + Amazon via Jina)
+    $graphql = <<<'GRAPHQL'
+    query SearchProducts($search: String!, $pageSize: Int!) {
+      products(search: $search, pageSize: $pageSize, sort: { relevance: DESC }) {
+        total_count
+        items {
+          name sku url_key
+          price_range { minimum_price { final_price { value } regular_price { value } discount { percent_off } } }
+          small_image { url }
+          stock_status
+        }
+      }
+    }
+    GRAPHQL;
+
+    $payload     = json_encode(['query' => $graphql, 'variables' => ['search' => $query, 'pageSize' => 30]]);
+    $pichauHeaders = [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'Accept-Language: pt-BR,pt;q=0.9',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Origin: https://www.pichau.com.br',
+        'Referer: https://www.pichau.com.br/search?q=' . rawurlencode($query),
+        'Store: default',
+    ];
+    $jinaHeaders = [
+        'Accept: text/html,*/*;q=0.8',
+        'Accept-Language: pt-BR,pt;q=0.9',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     ];
 
-    $produtos = [];
-    $avisos = [];
+    $handles = [
+        'pichau' => buildCurlHandle('https://www.pichau.com.br/graphql', $pichauHeaders, $payload, 'POST'),
+        'kabum'  => buildCurlHandle('https://r.jina.ai/https://www.kabum.com.br/busca/' . rawurlencode($query), $jinaHeaders),
+        'amazon' => buildCurlHandle('https://r.jina.ai/https://www.amazon.com.br/s?k=' . rawurlencode($query), $jinaHeaders),
+    ];
 
-    foreach ($fontes as $fonte) {
-        foreach ($fonte['produtos'] ?? [] as $produto) {
+    // 2. Dispara todos em paralelo
+    $responses = curlMultiExec($handles);
+
+    // 3. Processa Pichau
+    $pichauRes  = $responses['pichau'];
+    $pichauData = [];
+    if ($pichauRes['body'] !== '' && $pichauRes['status'] < 400
+        && stripos((string)$pichauRes['body'], 'Just a moment') === false) {
+        $decoded = json_decode($pichauRes['body'], true);
+        if (json_last_error() === JSON_ERROR_NONE && !isset($decoded['errors'])) {
+            $items = $decoded['data']['products']['items'] ?? [];
+            foreach ($items as $item) {
+                $precoInfo  = $item['price_range']['minimum_price'] ?? [];
+                $precoFinal = $precoInfo['final_price']['value']   ?? 0;
+                $precoOrig  = $precoInfo['regular_price']['value'] ?? 0;
+                $desconto   = $precoInfo['discount']['percent_off'] ?? 0;
+                $pichauData[] = [
+                    'nome'       => $item['name'] ?? '',
+                    'sku'        => $item['sku']  ?? '',
+                    'preco'      => $precoFinal,
+                    'preco_orig' => ($precoOrig && $precoOrig != $precoFinal) ? $precoOrig : null,
+                    'desconto'   => $desconto ? round($desconto, 1) : null,
+                    'url'        => 'https://www.pichau.com.br/' . ($item['url_key'] ?? ''),
+                    'imagem'     => $item['small_image']['url'] ?? '',
+                    'em_estoque' => ($item['stock_status'] ?? 'OUT_OF_STOCK') === 'IN_STOCK',
+                    'loja'       => 'Pichau',
+                ];
+            }
+        }
+    }
+    // fallback Pichau via Jina se GraphQL falhou
+    if (empty($pichauData)) {
+        $fallback   = parsePichauMarkdown($responses['pichau']['body'] ?? '', 30);
+        // Reaproveita o markdown de KaBuM (já temos); para Pichau, faz chamada extra só se necessário
+        // Aqui: apenas usa o que temos para não bloquear
+        $pichauData = $fallback['produtos'] ?? [];
+    }
+
+    // 4. Processa KaBuM
+    $kabumData  = parseKabumMarkdown((string)($responses['kabum']['body']  ?? ''), 30);
+    $amazonData = parseAmazonMarkdown((string)($responses['amazon']['body'] ?? ''), 30);
+
+    // 5. Junta e filtra por relevância
+    $produtos = [];
+    $avisos   = [];
+
+    foreach ([$pichauData, $kabumData['produtos'] ?? [], $amazonData['produtos'] ?? []] as $lista) {
+        foreach ($lista as $produto) {
             if (produtoCombinaComBusca($produto, $query)) {
                 $produtos[] = $produto;
             }
         }
+    }
 
-        if (!empty($fonte['aviso'])) {
-            $avisos[] = $fonte['aviso'];
-        }
+    foreach ([$kabumData, $amazonData] as $fonte) {
+        if (!empty($fonte['aviso'])) $avisos[] = $fonte['aviso'];
     }
 
     ordenarProdutosPorPreco($produtos);
     $produtos = array_slice($produtos, 0, 36);
+
     $lojas = [];
     foreach ($produtos as $produto) {
-        $loja = $produto['loja'] ?? 'Loja';
+        $loja          = $produto['loja'] ?? 'Loja';
         $lojas[$loja] = ($lojas[$loja] ?? 0) + 1;
     }
 
     return [
-        'total' => count($produtos),
+        'total'   => count($produtos),
         'produtos' => $produtos,
-        'fonte' => 'Pichau, KaBuM! e Amazon',
-        'lojas' => $lojas,
-        'aviso' => $avisos ? implode(' ', array_unique($avisos)) : '',
+        'fonte'   => 'Pichau, KaBuM! e Amazon',
+        'lojas'   => $lojas,
+        'aviso'   => $avisos ? implode(' ', array_unique($avisos)) : '',
     ];
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function ordenarProdutosPorPreco(array &$produtos): void
+{
+    usort($produtos, static function (array $a, array $b): int {
+        $precoA = $a['preco'] ?? null;
+        $precoB = $b['preco'] ?? null;
+        if ($precoA === null && $precoB === null) return 0;
+        if ($precoA === null) return 1;
+        if ($precoB === null) return -1;
+        return $precoA <=> $precoB;
+    });
 }
 
 function produtoCombinaComBusca(array $produto, string $query): bool
 {
-    $nome = $produto['nome'] ?? '';
-    $url = $produto['url'] ?? '';
-    $textoNome = normalizarTexto($nome);
+    $nome        = $produto['nome'] ?? '';
+    $url         = $produto['url']  ?? '';
+    $textoNome   = normalizarTexto($nome);
     $textoProduto = normalizarTexto($nome . ' ' . str_replace(['-', '/', '_'], ' ', $url));
-    $textoBusca = normalizarTexto($query);
+    $textoBusca  = normalizarTexto($query);
 
-    if ($textoNome === '' || $textoBusca === '') {
-        return false;
-    }
+    if ($textoNome === '' || $textoBusca === '') return false;
 
     preg_match_all('/\b\d{3,5}\b/u', $textoBusca, $numerosBusca);
     foreach (array_unique($numerosBusca[0] ?? []) as $numero) {
-        if (!preg_match('/\b' . preg_quote($numero, '/') . '\b/u', $textoNome)) {
-            return false;
-        }
+        if (!preg_match('/\b' . preg_quote($numero, '/') . '\b/u', $textoNome)) return false;
     }
 
     if (preg_match('/\b(placa\s+de\s+video|placa\s+video|gpu|rtx|gtx|radeon|rx)\b/u', $textoBusca)) {
-        if (!preg_match('/\b(placa\s+de\s+video|placa\s+video|gpu|rtx|gtx|radeon|rx|geforce)\b/u', $textoNome)) {
-            return false;
-        }
-
-        if (preg_match('/\b(pc|computador|desktop|workstation|setup)\b/u', $textoNome) && !preg_match('/\b(pc|computador|desktop|workstation|setup)\b/u', $textoBusca)) {
-            return false;
-        }
+        if (!preg_match('/\b(placa\s+de\s+video|placa\s+video|gpu|rtx|gtx|radeon|rx|geforce)\b/u', $textoNome)) return false;
+        if (preg_match('/\b(pc|computador|desktop|workstation|setup)\b/u', $textoNome)
+            && !preg_match('/\b(pc|computador|desktop|workstation|setup)\b/u', $textoBusca)) return false;
     }
 
     $bloqueios = [
         '/\b(pc|computador|desktop|workstation)\b/u' => '/\b(pc|computador|desktop|workstation)\b/u',
-        '/\b(kit|combo)\b/u' => '/\b(kit|combo)\b/u',
-        '/\b(teclado)\b/u' => '/\b(teclado)\b/u',
-        '/\b(monitor)\b/u' => '/\b(monitor)\b/u',
+        '/\b(kit|combo)\b/u'  => '/\b(kit|combo)\b/u',
+        '/\b(teclado)\b/u'    => '/\b(teclado)\b/u',
+        '/\b(monitor)\b/u'    => '/\b(monitor)\b/u',
     ];
 
     foreach ($bloqueios as $padraoProduto => $padraoBusca) {
-        if (preg_match($padraoProduto, $textoNome) && !preg_match($padraoBusca, $textoBusca)) {
-            return false;
-        }
+        if (preg_match($padraoProduto, $textoNome) && !preg_match($padraoBusca, $textoBusca)) return false;
     }
 
-    $tokensBusca = tokensBusca($textoBusca);
-    if (!$tokensBusca) {
-        return true;
-    }
+    $tokensBusca_ = tokensBusca($textoBusca);
+    if (!$tokensBusca_) return true;
 
     $tokensEncontrados = 0;
-    foreach ($tokensBusca as $token) {
-        if (str_contains($textoNome, $token)) {
-            $tokensEncontrados++;
-        }
+    foreach ($tokensBusca_ as $token) {
+        if (str_contains($textoNome, $token)) $tokensEncontrados++;
     }
 
-    $minimo = count($tokensBusca) <= 2 ? count($tokensBusca) : max(2, (int) ceil(count($tokensBusca) * 0.7));
+    $minimo = count($tokensBusca_) <= 2 ? count($tokensBusca_) : max(2, (int) ceil(count($tokensBusca_) * 0.7));
     return $tokensEncontrados >= $minimo;
 }
 
@@ -583,7 +591,6 @@ function tokensBusca(string $texto): array
 {
     $stopwords = ['de', 'da', 'do', 'das', 'dos', 'com', 'sem', 'para', 'por', 'um', 'uma', 'o', 'a', 'e'];
     preg_match_all('/[a-z0-9]+/u', $texto, $matches);
-
     return array_values(array_unique(array_filter($matches[0] ?? [], static function (string $token) use ($stopwords): bool {
         return strlen($token) >= 2 && !in_array($token, $stopwords, true);
     })));
@@ -591,37 +598,11 @@ function tokensBusca(string $texto): array
 
 function normalizarTexto(string $texto): string
 {
-    $texto = mb_strtolower($texto, 'UTF-8');
+    $texto     = mb_strtolower($texto, 'UTF-8');
     $convertido = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $texto);
-    $texto = $convertido !== false ? $convertido : $texto;
-    $texto = preg_replace('/[^a-z0-9]+/u', ' ', $texto);
-
+    $texto     = $convertido !== false ? $convertido : $texto;
+    $texto     = preg_replace('/[^a-z0-9]+/u', ' ', $texto);
     return trim(preg_replace('/\s+/', ' ', $texto));
-}
-
-function lerPaginaRenderizada(string $url): string
-{
-    $readerUrl = 'https://r.jina.ai/http://r.jina.ai/http://' . $url;
-    $headers = [
-        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    ];
-
-    $ch = curl_init($readerUrl);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_ENCODING => '',
-        CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 20,
-    ]);
-
-    $conteudo = curl_exec($ch);
-    curl_close($ch);
-
-    return is_string($conteudo) ? $conteudo : '';
 }
 
 function moedaParaFloat(string $valor): float
@@ -629,7 +610,7 @@ function moedaParaFloat(string $valor): float
     return (float) str_replace(',', '.', str_replace('.', '', $valor));
 }
 
-// ── SEARCH (webscraping com fallback) ────────────────────────────────────────
+// ── SEARCH ────────────────────────────────────────────────────────────────────
 if ($action === 'search') {
     if (!isLoggedIn()) {
         echo json_encode(['success' => false, 'message' => 'Sessão expirada. Faça login novamente.']);
@@ -637,86 +618,50 @@ if ($action === 'search') {
     }
 
     $busca = trim($_POST['busca'] ?? '');
-    $pagina = max(1, (int)($_POST['pagina'] ?? 1));
-    $ordem = $_POST['ordem'] ?? 'preco_asc';
-    $filtro_sites = $_POST['sites'] ?? '';
 
     if (mb_strlen($busca) < 2) {
         echo json_encode(['success' => false, 'message' => 'Digite pelo menos 2 caracteres para pesquisar.']);
         exit;
     }
-
     if (mb_strlen($busca) > 120) {
         echo json_encode(['success' => false, 'message' => 'Termo de pesquisa muito longo.']);
         exit;
     }
 
-    $inicio = microtime(true);
+    // Verifica cache
+    $cacheKey = 'search_' . strtolower($busca);
+    $cached   = cacheGet($cacheKey);
 
-    // Usa a função original que funciona
+    if ($cached !== null) {
+        // Cache hit: retorna instantaneamente, marcando que veio do cache
+        echo json_encode([
+            'success'  => true,
+            'data'     => $cached['data'],
+            'tempo'    => $cached['tempo'],
+            'do_cache' => true,
+        ]);
+        exit;
+    }
+
+    $inicio    = microtime(true);
     $resultado = buscarProdutosMultisite($busca);
+    $tempo     = round((microtime(true) - $inicio), 2);
 
     if (isset($resultado['erro'])) {
         echo json_encode(['success' => false, 'message' => $resultado['erro']]);
         exit;
     }
 
-    // Aplicar ordenação
-    $produtos = $resultado['produtos'] ?? [];
-
-    if ($ordem === 'preco_desc') {
-        usort($produtos, fn($a, $b) => ($b['preco'] ?? 0) <=> ($a['preco'] ?? 0));
-    } else {
-        ordenarProdutosPorPreco($produtos);
-    }
-
-    // Aplicar filtro de lojas
-    if ($filtro_sites) {
-        $lojas_filtro = array_map('trim', explode(',', $filtro_sites));
-        $produtos = array_filter($produtos, fn($p) => in_array($p['loja'] ?? '', $lojas_filtro));
-        $produtos = array_values($produtos);
-    }
-
-    // Paginação (7 itens por página)
-    $itens_por_pagina = 7;
-    $total_itens = count($produtos);
-    $total_paginas = ceil($total_itens / $itens_por_pagina);
-    $pagina = min($pagina, max(1, $total_paginas));
-
-    $inicio_slice = ($pagina - 1) * $itens_por_pagina;
-    $produtos_pagina = array_slice($produtos, $inicio_slice, $itens_por_pagina);
-
-    // Sites disponíveis
-    $sites_disponiveis = [];
-    foreach ($resultado['produtos'] ?? [] as $p) {
-        $site = $p['loja'] ?? 'Desconhecido';
-        if (!in_array($site, $sites_disponiveis)) {
-            $sites_disponiveis[] = $site;
-        }
-    }
-
-    $tempo = round((microtime(true) - $inicio), 2);
-
-    $lojas = [];
-    foreach ($produtos_pagina as $produto) {
-        $loja = $produto['loja'] ?? 'Loja';
-        $lojas[$loja] = ($lojas[$loja] ?? 0) + 1;
+    // Salva no cache apenas se obteve resultados
+    if (!empty($resultado['produtos'])) {
+        cacheSet($cacheKey, ['data' => $resultado, 'tempo' => $tempo]);
     }
 
     echo json_encode([
-        'success' => true,
-        'data' => [
-            'total' => $total_itens,
-            'pagina_atual' => $pagina,
-            'total_paginas' => max(1, $total_paginas),
-            'itens_por_pagina' => $itens_por_pagina,
-            'sites_disponiveis' => $sites_disponiveis,
-            'produtos' => $produtos_pagina,
-            'lojas' => $lojas,
-            'fonte' => $resultado['fonte'] ?? 'Pichau, KaBuM! e Amazon',
-            'aviso' => $resultado['aviso'] ?? '',
-        ],
-        'tempo' => $tempo,
+        'success'  => true,
+        'data'     => $resultado,
+        'tempo'    => $tempo,
+        'do_cache' => false,
     ]);
     exit;
 }

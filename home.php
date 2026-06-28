@@ -33,7 +33,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
             padding: 18px 20px;
             border: 1px solid var(--stone);
             border-radius: var(--radius-md);
-            background: rgba(255,255,255,.78);
+            background: color-mix(in srgb, var(--white) 78%, transparent);
             box-shadow: var(--shadow-sm);
             backdrop-filter: blur(12px);
         }
@@ -521,18 +521,15 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
                 <div class="navbar__avatar"><?= htmlspecialchars($initial) ?></div>
                 <span><?= htmlspecialchars($user['name']) ?></span>
             </div>
+            <button class="theme-toggle theme-toggle--inline" id="theme-toggle-home" aria-label="Alternar modo escuro">
+                <span class="theme-toggle__icon" id="theme-icon-home">🌙</span>
+            </button>
             <button class="btn-logout" id="btn-logout">Sair</button>
         </div>
     </nav>
 
     <!-- ── Hero ──────────────────────────────────────────────────────────────── -->
     <main class="hero">
-
-        <div class="hero__eyebrow">
-            <span class="hero__eyebrow-dot"></span>
-            Comparador de preços
-        </div>
-
         <h1 class="hero__title">
             O que você quer<br>
             <em>comprar hoje?</em>
@@ -560,19 +557,6 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
                     autocomplete="off"
                     maxlength="120"
                 >
-
-                <span class="search-bar__divider"></span>
-
-                <!-- Upload de imagem (visual apenas) -->
-                <label class="search-bar__upload" for="img-upload" title="Enviar imagem">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                        <circle cx="8.5" cy="8.5" r="1.5"/>
-                        <polyline points="21 15 16 10 5 21"/>
-                    </svg>
-                    <span>Imagem</span>
-                    <input type="file" id="img-upload" accept="image/*" style="display:none">
-                </label>
 
                 <button class="search-bar__btn" id="search-btn">Buscar</button>
             </div>
@@ -644,6 +628,28 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 </div><!-- /.page -->
 
 <script>
+(function() {
+    var root = document.documentElement;
+    var btn  = document.getElementById('theme-toggle-home');
+    var icon = document.getElementById('theme-icon-home');
+    var KEY  = 'precio-theme';
+    function applyTheme(theme) {
+        root.dataset.theme = theme;
+        if (icon) icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+        if (btn)  btn.setAttribute('aria-label', theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro');
+    }
+    var stored    = localStorage.getItem(KEY);
+    var preferred = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    applyTheme(stored || preferred);
+    if (btn) {
+        btn.addEventListener('click', function() {
+            var next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+            applyTheme(next);
+            localStorage.setItem(KEY, next);
+        });
+    }
+})();
+
 // ── Logout ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-logout').addEventListener('click', async () => {
     const btn = document.getElementById('btn-logout');
@@ -657,20 +663,6 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
         if (json.success) window.location.href = json.redirect;
     } catch {
         window.location.href = 'index.php';
-    }
-});
-
-// ── Preview de imagem enviada ─────────────────────────────────────────────────
-document.getElementById('img-upload').addEventListener('change', function () {
-    if (this.files && this.files[0]) {
-        document.getElementById('search-input').value = '';
-        document.getElementById('search-input').placeholder = `📎 ${this.files[0].name}`;
-    }
-});
-
-document.getElementById('search-input').addEventListener('focus', function () {
-    if (this.placeholder.startsWith('📎')) {
-        this.placeholder = 'Ex: RTX 4060, Ryzen 5 7600, SSD NVMe…';
     }
 });
 
@@ -702,7 +694,7 @@ function mostrarLoading() {
             <div class="loading-panel">
                 <div>
                     <strong>Comparando lojas em paralelo</strong>
-                    <span>Pichau, KaBuM!, Amazon e Casas Bahia estão sendo consultadas agora.</span>
+                    <span>Pichau, KaBuM! e Amazon estão sendo consultadas agora.</span>
                 </div>
                 <div class="spinner"></div>
             </div>
@@ -723,12 +715,9 @@ function mostrarErro(msg) {
     resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function mostrarResultados(data, tempo) {
+function mostrarResultados(data, tempo, doCache) {
     const produtos = data.produtos || [];
     const total    = data.total    || 0;
-    const pagina = data.pagina_atual || 1;
-    const totalPaginas = data.total_paginas || 1;
-    const sitesDisponiveis = data.sites_disponiveis || [];
 
     if (produtos.length === 0) {
         resultsSection.style.display = 'block';
@@ -756,14 +745,17 @@ function mostrarResultados(data, tempo) {
     const menorPrecoHtml = melhorPreco !== null ? formatBRL(melhorPreco) : '-';
     const fonte = data.fonte ? escHtml(data.fonte) : 'lojas disponíveis';
 
-    const ordemAtual = new URLSearchParams(window.location.search).get('ordem') || 'preco_asc';
-    const siteFiltro = new URLSearchParams(window.location.search).get('site') || '';
-
     let html = `
         <div class="results-meta">
             <span>
                 <span class="results-meta__title">${total} oferta${total !== 1 ? 's' : ''} para "${termoExibido}"</span>
                 Ordenadas por menor preço em ${fonte}
+            </span>
+            <span class="results-timing">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                ${tempo}s
             </span>
         </div>
         <div class="results-summary">
@@ -784,27 +776,6 @@ function mostrarResultados(data, tempo) {
                 <span class="summary-tile__value">${tempo}s</span>
             </div>
         </div>
-
-        <div style="display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
-            <div>
-                <label style="font-weight: 600; color: var(--text-soft); margin-right: 10px;">Ordenar por:</label>
-                <select id="ordenar-select" style="padding: 8px 12px; border: 1px solid var(--stone); border-radius: var(--radius-md); font-size: 14px;">
-                    <option value="preco_asc" ${ordemAtual === 'preco_asc' ? 'selected' : ''}>💰 Menor Preço</option>
-                    <option value="preco_desc" ${ordemAtual === 'preco_desc' ? 'selected' : ''}>💰 Maior Preço</option>
-                </select>
-            </div>
-            <div>
-                <label style="font-weight: 600; color: var(--text-soft); margin-right: 10px;">Filtrar Lojas:</label>
-                <select id="filtro-lojas" style="padding: 8px 12px; border: 1px solid var(--stone); border-radius: var(--radius-md); font-size: 14px;">
-                    <option value="">Todas as lojas (${sitesDisponiveis.length})</option>
-                    ${sitesDisponiveis.map(s => `<option value="${escHtml(s)}" ${siteFiltro === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
-                </select>
-            </div>
-            <div style="margin-left: auto; color: var(--text-soft); font-size: 14px;">
-                Página <strong>${pagina}</strong> de <strong>${totalPaginas}</strong>
-            </div>
-        </div>
-
         ${lojasHtml ? `<div class="store-chips">${lojasHtml}</div>` : ''}
         ${data.aviso ? `<div class="results-notice">${escHtml(data.aviso)}</div>` : ''}
         <div class="results-grid">
@@ -824,7 +795,7 @@ function mostrarResultados(data, tempo) {
                 <div class="product-card__img">${imgHtml}</div>
                 <div class="product-card__body">
                     <div>
-                        ${p.site ? `<span class="product-card__store">${escHtml(p.site)}</span>` : ''}
+                        ${p.loja ? `<span class="product-card__store">${escHtml(p.loja)}</span>` : ''}
                         ${isBest ? `<span class="product-card__best">Melhor preço</span>` : ''}
                         <div class="product-card__name">${escHtml(p.nome)}</div>
                     </div>
@@ -844,50 +815,12 @@ function mostrarResultados(data, tempo) {
 
     html += '</div>';
 
-    if (totalPaginas > 1) {
-        html += '<div style="display: flex; gap: 10px; justify-content: center; margin: 40px 0; flex-wrap: wrap;">';
-
-        if (pagina > 1) {
-            html += `<button onclick="irParaPagina(1)" style="padding: 8px 12px; border: 1px solid var(--stone); border-radius: var(--radius-md); background: var(--white); cursor: pointer;">⬅️ Primeira</button>`;
-            html += `<button onclick="irParaPagina(${pagina - 1})" style="padding: 8px 12px; border: 1px solid var(--stone); border-radius: var(--radius-md); background: var(--white); cursor: pointer;">◀️ Anterior</button>`;
-        }
-
-        const inicio = Math.max(1, pagina - 2);
-        const fim = Math.min(totalPaginas, pagina + 2);
-
-        for (let i = inicio; i <= fim; i++) {
-            if (i === pagina) {
-                html += `<span style="padding: 8px 12px; border: 1px solid var(--indigo); border-radius: var(--radius-md); background: var(--indigo); color: var(--white);">${i}</span>`;
-            } else {
-                html += `<button onclick="irParaPagina(${i})" style="padding: 8px 12px; border: 1px solid var(--stone); border-radius: var(--radius-md); background: var(--white); cursor: pointer;">${i}</button>`;
-            }
-        }
-
-        if (pagina < totalPaginas) {
-            html += `<button onclick="irParaPagina(${pagina + 1})" style="padding: 8px 12px; border: 1px solid var(--stone); border-radius: var(--radius-md); background: var(--white); cursor: pointer;">Próxima ▶️</button>`;
-            html += `<button onclick="irParaPagina(${totalPaginas})" style="padding: 8px 12px; border: 1px solid var(--stone); border-radius: var(--radius-md); background: var(--white); cursor: pointer;">Última ⬅️</button>`;
-        }
-
-        html += '</div>';
-    }
-
     resultsSection.style.display = 'block';
     resultsSection.innerHTML = html;
-
-    document.getElementById('ordenar-select').addEventListener('change', (e) => {
-        irParaPagina(1, e.target.value, document.getElementById('filtro-lojas').value);
-    });
-
-    document.getElementById('filtro-lojas').addEventListener('change', (e) => {
-        irParaPagina(1, document.getElementById('ordenar-select').value, e.target.value);
-    });
-
     resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-let ultimaBusca = '';
-
-async function realizarBusca(pagina = 1, ordem = 'preco_asc', sites = '') {
+async function realizarBusca() {
     const termo = searchInput.value.trim();
 
     if (termo.length < 2) {
@@ -895,7 +828,6 @@ async function realizarBusca(pagina = 1, ordem = 'preco_asc', sites = '') {
         return;
     }
 
-    ultimaBusca = termo;
     searchBtn.disabled    = true;
     searchBtn.textContent = 'Buscando…';
     mostrarLoading();
@@ -904,15 +836,12 @@ async function realizarBusca(pagina = 1, ordem = 'preco_asc', sites = '') {
         const fd = new FormData();
         fd.append('action', 'search');
         fd.append('busca', termo);
-        fd.append('pagina', pagina);
-        fd.append('ordem', ordem);
-        fd.append('sites', sites);
 
         const res  = await fetch('api.php', { method: 'POST', body: fd });
         const json = await res.json();
 
         if (json.success) {
-            mostrarResultados(json.data, json.tempo);
+            mostrarResultados(json.data, json.tempo, json.do_cache);
         } else {
             mostrarErro(json.message || 'Erro ao realizar a busca.');
         }
@@ -922,12 +851,6 @@ async function realizarBusca(pagina = 1, ordem = 'preco_asc', sites = '') {
         searchBtn.disabled    = false;
         searchBtn.textContent = 'Buscar';
     }
-}
-
-function irParaPagina(pagina, ordem = null, sites = null) {
-    if (ordem === null) ordem = document.getElementById('ordenar-select')?.value || 'preco_asc';
-    if (sites === null) sites = document.getElementById('filtro-lojas')?.value || '';
-    realizarBusca(pagina, ordem, sites);
 }
 
 searchBtn.addEventListener('click', realizarBusca);

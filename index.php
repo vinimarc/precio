@@ -81,7 +81,7 @@ if (isLoggedIn()) {
             <em>Compre melhor.</em>
         </h1>
         <p class="auth-brand__sub">
-            Cole um link ou imagem de qualquer produto e o Precio encontra as melhores ofertas em dezenas de lojas — em segundos.
+            Digite o nome de qualquer produto e o Precio encontra as melhores ofertas em Pichau, KaBuM! e Amazon — em segundos.
         </p>
 
         <div class="auth-brand__tags">
@@ -244,6 +244,13 @@ document.getElementById('login-password').addEventListener('keydown', e => {
 document.getElementById('reg-confirm').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('btn-register').click();
 });
+
+// Dark Mode sync
+(function() {
+    var theme = localStorage.getItem('precio-theme') ||
+                (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.dataset.theme = theme;
+})();
 </script>
 </body>
 </html>
