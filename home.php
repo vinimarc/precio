@@ -282,19 +282,38 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
             display: block;
             margin-top: 10px;
             padding: 8px;
-            background: rgba(61,74,107,.05);
-            border: 1px solid rgba(61,74,107,.10);
+            /* Antes era rgba(61,74,107,.05) fixo (tom do indigo claro), então no
+               dark mode — onde --indigo vira uma cor clara (#D7E3F4) — o botão
+               ficava com um fundo quase invisível. color-mix com --indigo
+               acompanha o tema atual nos dois modos. */
+            background: color-mix(in srgb, var(--indigo) 6%, transparent);
+            border: 1px solid color-mix(in srgb, var(--indigo) 12%, transparent);
             color: var(--indigo);
             border-radius: var(--radius-sm);
             text-align: center;
             font-size: .82rem;
             font-weight: 500;
-            transition: background .18s, border-color .18s;
+            transition: background .18s, border-color .18s, color .18s, transform .18s;
         }
 
+        /* Hover do card inteiro (efeito mais sutil, "aquece" o botão mesmo
+           quando o cursor está em outra parte do card). */
         .product-card:hover .product-card__cta {
             background: var(--sky-pale);
             border-color: var(--sky);
+        }
+
+        /* BUG FIX: o botão "Ver na loja →" não tinha estado :hover próprio —
+           dependia só do hover do card pai, então passar o mouse diretamente
+           sobre o botão não dava nenhum feedback além do que já acontecia ao
+           passar em qualquer outro ponto do card. Agora o hover direto no
+           botão tem um destaque mais forte e visível (preenchimento sólido
+           em --indigo), deixando claro que é um elemento clicável distinto. */
+        .product-card__cta:hover {
+            background: var(--indigo);
+            border-color: var(--indigo);
+            color: var(--white);
+            transform: translateY(-1px);
         }
 
         @keyframes productIn {
@@ -362,9 +381,13 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
             height: 136px;
             border-radius: var(--radius-md);
             border: 1px solid var(--stone);
+            /* Era hardcoded para tons claros (#F0EFEC/#FFFFFF), por isso ficava
+               um bloco branco "queimado" sobre o fundo escuro no dark mode.
+               Agora usa --stone/--off-white/--white do tema atual, então a base
+               e o brilho do shimmer se adaptam automaticamente. */
             background:
-                linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.82), rgba(255,255,255,0)),
-                linear-gradient(90deg, #F0EFEC 0 150px, #FFFFFF 150px 100%);
+                linear-gradient(90deg, color-mix(in srgb, var(--white) 0%, transparent), color-mix(in srgb, var(--white) 82%, transparent), color-mix(in srgb, var(--white) 0%, transparent)),
+                linear-gradient(90deg, var(--stone) 0 150px, var(--off-white) 150px 100%);
             background-size: 220px 100%, 100% 100%;
             background-position: -220px 0, 0 0;
             animation: shimmer 1.05s infinite linear;
@@ -639,14 +662,17 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 
 <aside class="cart-panel" id="cart-panel" aria-label="Carrinho de produtos">
     <div class="cart-panel__header">
-        <span class="cart-panel__title">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
-                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-            </svg>
-            Carrinho
-            <span class="cart-panel__title-count" id="cart-panel-count">0</span>
-        </span>
+        <div class="cart-panel__heading">
+            <span class="cart-panel__title">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+                    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                </svg>
+                Carrinho
+                <span class="cart-panel__title-count" id="cart-panel-count">0</span>
+            </span>
+            <span class="cart-panel__subtitle" id="cart-panel-subtitle">Compare antes de comprar</span>
+        </div>
         <button class="cart-panel__close" id="cart-close" aria-label="Fechar carrinho">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -659,9 +685,15 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
     </div>
 
     <div class="cart-panel__footer" id="cart-footer" style="display:none">
+        <div class="cart-insight" id="cart-insight">
+            <!-- Preenchido via JS -->
+        </div>
         <div class="cart-summary">
             <span class="cart-summary__label">Total estimado</span>
-            <span class="cart-summary__value" id="cart-total">R$ 0,00</span>
+            <span class="cart-summary__value-wrap">
+                <span class="cart-summary__currency">R$</span>
+                <span class="cart-summary__value" id="cart-total">0,00</span>
+            </span>
         </div>
         <span class="cart-summary__note">Soma dos preços encontrados na busca — confira o valor final em cada loja.</span>
         <button class="cart-btn-viewall" id="cart-viewall">
@@ -786,6 +818,8 @@ const cartBody      = document.getElementById('cart-body');
 const cartFooter    = document.getElementById('cart-footer');
 const cartBadge     = document.getElementById('cart-badge');
 const cartPanelCount= document.getElementById('cart-panel-count');
+const cartPanelSubtitle = document.getElementById('cart-panel-subtitle');
+const cartInsight   = document.getElementById('cart-insight');
 const cartTotal     = document.getElementById('cart-total');
 const cartViewAllBtn= document.getElementById('cart-viewall');
 const cartClearBtn  = document.getElementById('cart-clear');
@@ -819,6 +853,11 @@ function showToast(msg) {
     showToast._t = setTimeout(() => cartToast.classList.remove('show'), 2200);
 }
 
+// Formata só o número (sem "R$") para o total em destaque no footer do carrinho.
+function formatBRLNumero(valor) {
+    return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(valor));
+}
+
 function renderCartBadge() {
     const count = Cart.getAll().length;
     cartBadge.textContent = count > 99 ? '99+' : String(count);
@@ -831,11 +870,18 @@ function renderCartPanel() {
     renderCartBadge();
 
     if (all.length === 0) {
+        cartPanelSubtitle.textContent = 'Compare antes de comprar';
         cartBody.innerHTML = `
             <div class="cart-empty">
-                <span class="cart-empty__icon">🛒</span>
+                <svg class="cart-empty__illo" width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="48" cy="48" r="46" stroke="currentColor" stroke-opacity=".14" stroke-width="2" stroke-dasharray="4 6"/>
+                    <path d="M28 34h6l4.2 28.6a4 4 0 0 0 4 3.4h17.4a4 4 0 0 0 3.95-3.34L67 40H38" stroke="currentColor" stroke-opacity=".55" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="42" cy="74" r="2.6" fill="currentColor" fill-opacity=".55"/>
+                    <circle cx="60" cy="74" r="2.6" fill="currentColor" fill-opacity=".55"/>
+                    <path d="M43 47l3.4 3.6L53 44" stroke="var(--sky)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
                 <strong>Seu carrinho está vazio</strong>
-                <p>Pesquise um produto e clique em "Adicionar" para guardá-lo aqui e comparar depois.</p>
+                <p>Pesquise um produto e clique em "Adicionar" para guardá-lo aqui e comparar preços entre lojas.</p>
             </div>
         `;
         cartFooter.style.display = 'none';
@@ -843,50 +889,98 @@ function renderCartPanel() {
     }
 
     cartFooter.style.display = 'flex';
+    cartPanelSubtitle.textContent = all.length === 1 ? '1 produto para comparar' : `${all.length} produtos para comparar`;
 
     let total = 0;
     let temPrecoDesconhecido = false;
 
-    const itemsHtml = all.map(item => {
+    // Agrupa por loja — é a vantagem real de um carrinho de comparação: ver de
+    // onde vêm os itens e o subtotal de cada loja, não só a soma final.
+    const porLoja = new Map();
+    for (const item of all) {
+        const loja = item.loja || 'Loja não identificada';
+        if (!porLoja.has(loja)) porLoja.set(loja, []);
+        porLoja.get(loja).push(item);
+
         if (item.preco !== null && item.preco !== undefined) {
             total += Number(item.preco);
         } else {
             temPrecoDesconhecido = true;
         }
+    }
 
-        const imgHtml = item.imagem
-            ? `<img src="${escHtml(item.imagem)}" alt="${escHtml(item.nome)}" loading="lazy" onerror="this.style.display='none'">`
-            : `<span style="font-size:1.6rem">📦</span>`;
-        const precoTxt = item.preco !== null && item.preco !== undefined ? formatBRL(item.preco) : 'Ver preço no site';
+    const gruposHtml = [...porLoja.entries()].map(([loja, itens]) => {
+        let subtotal = 0;
+        let subtotalIncompleto = false;
+        for (const item of itens) {
+            if (item.preco !== null && item.preco !== undefined) subtotal += Number(item.preco);
+            else subtotalIncompleto = true;
+        }
+
+        const itemsHtml = itens.map(item => {
+            const imgHtml = item.imagem
+                ? `<img src="${escHtml(item.imagem)}" alt="${escHtml(item.nome)}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                   <span class="cart-item__img-fallback" style="display:none">📦</span>`
+                : `<span class="cart-item__img-fallback">📦</span>`;
+            const precoTxt = item.preco !== null && item.preco !== undefined ? formatBRL(item.preco) : 'Ver preço no site';
+
+            return `
+                <div class="cart-item" data-id="${escHtml(item.id)}">
+                    <div class="cart-item__img">${imgHtml}</div>
+                    <div class="cart-item__body">
+                        <span class="cart-item__name">${escHtml(item.nome)}</span>
+                        <span class="cart-item__price">${precoTxt}</span>
+                    </div>
+                    <div class="cart-item__actions">
+                        <a class="cart-item__link" href="${escHtml(item.url)}" target="_blank" rel="noopener noreferrer" title="Ver na loja" aria-label="Ver na loja">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                            </svg>
+                        </a>
+                        <button class="cart-item__remove" data-remove-id="${escHtml(item.id)}" title="Remover" aria-label="Remover do carrinho">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
 
         return `
-            <div class="cart-item" data-id="${escHtml(item.id)}">
-                <div class="cart-item__img">${imgHtml}</div>
-                <div class="cart-item__body">
-                    ${item.loja ? `<span class="cart-item__store">${escHtml(item.loja)}</span>` : ''}
-                    <span class="cart-item__name">${escHtml(item.nome)}</span>
-                    <span class="cart-item__price">${precoTxt}</span>
+            <div class="cart-group">
+                <div class="cart-group__header">
+                    <span class="cart-group__store">
+                        <span class="cart-group__dot"></span>
+                        ${escHtml(loja)}
+                    </span>
+                    <span class="cart-group__subtotal">${formatBRL(subtotal)}${subtotalIncompleto ? '+' : ''}</span>
                 </div>
-                <div class="cart-item__actions">
-                    <a class="cart-item__link" href="${escHtml(item.url)}" target="_blank" rel="noopener noreferrer" title="Ver na loja" aria-label="Ver na loja">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-                        </svg>
-                    </a>
-                    <button class="cart-item__remove" data-remove-id="${escHtml(item.id)}" title="Remover" aria-label="Remover do carrinho">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        </svg>
-                    </button>
-                </div>
+                <div class="cart-items">${itemsHtml}</div>
             </div>
         `;
     }).join('');
 
-    cartBody.innerHTML = `<div class="cart-items">${itemsHtml}</div>`;
-    cartTotal.textContent = formatBRL(total) + (temPrecoDesconhecido ? '+' : '');
+    cartBody.innerHTML = gruposHtml;
+    cartTotal.textContent = formatBRLNumero(total) + (temPrecoDesconhecido ? '+' : '');
+
+    // Insight: qual loja concentra mais itens do carrinho — útil para decidir
+    // onde finalizar a compra e evitar frete duplicado.
+    if (porLoja.size > 1) {
+        const [lojaTop, itensTop] = [...porLoja.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+        cartInsight.style.display = 'flex';
+        cartInsight.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="9"/>
+            </svg>
+            <span><strong>${escHtml(lojaTop)}</strong> concentra ${itensTop.length} de ${all.length} itens — finalizar por lá pode economizar no frete.</span>
+        `;
+    } else {
+        cartInsight.style.display = 'none';
+        cartInsight.innerHTML = '';
+    }
 
     // Remoção individual
     cartBody.querySelectorAll('[data-remove-id]').forEach(btn => {

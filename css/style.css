@@ -675,15 +675,32 @@ html[data-theme="dark"] .badge-cache {
 
 .cart-panel__header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
-    padding: 22px 24px;
+    gap: 12px;
+    padding: 22px 22px 20px;
     border-bottom: 1px solid var(--stone);
     background: var(--white);
+    position: relative;
+}
+/* Friso de acento no topo do painel — reforça a identidade da marca (indigo →
+   sky) sem precisar de mais um bloco de cor no corpo do carrinho. */
+.cart-panel__header::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--indigo), var(--sky));
+}
+.cart-panel__heading {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
 }
 .cart-panel__title {
     font-family: var(--font-display);
-    font-size: 1.3rem;
+    font-size: 1.34rem;
     font-weight: 500;
     color: var(--text);
     display: flex;
@@ -699,32 +716,81 @@ html[data-theme="dark"] .badge-cache {
     border-radius: 999px;
     padding: 2px 9px;
 }
+.cart-panel__subtitle {
+    font-size: .8rem;
+    color: var(--muted);
+    padding-left: 28px;
+}
 .cart-panel__close {
     width: 34px;
     height: 34px;
+    min-width: 34px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--muted);
     transition: all .18s;
+    margin-top: 2px;
 }
 .cart-panel__close:hover {
     background: var(--stone);
     color: var(--text);
+    transform: rotate(90deg);
 }
 
 .cart-panel__body {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 18px;
+    padding: 14px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+/* Grupo por loja — a vantagem real de comparar preços é ver de onde vêm os
+   itens e o subtotal de cada loja antes de decidir onde fechar a compra. */
+.cart-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.cart-group__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 2px;
+}
+.cart-group__store {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+}
+.cart-group__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--sky);
+    flex-shrink: 0;
+}
+.cart-group__subtotal {
+    font-size: .78rem;
+    font-weight: 700;
+    color: var(--text-soft);
+    font-feature-settings: "tnum";
 }
 
 /* Lista de itens */
 .cart-items {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
 }
 
 .cart-item {
@@ -737,6 +803,12 @@ html[data-theme="dark"] .badge-cache {
     overflow: hidden;
     box-shadow: var(--shadow-sm);
     animation: cartItemIn .28s ease;
+    transition: border-color .18s, box-shadow .18s, transform .18s;
+}
+.cart-item:hover {
+    border-color: var(--sky);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
 }
 @keyframes cartItemIn {
     from { opacity: 0; transform: translateX(14px); }
@@ -750,36 +822,30 @@ html[data-theme="dark"] .badge-cache {
 }
 
 .cart-item__img {
-    width: 76px;
-    min-width: 76px;
+    width: 72px;
+    min-width: 72px;
     background: var(--off-white);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.6rem;
+    font-size: 1.5rem;
     padding: 6px;
 }
 .cart-item__img img {
     max-width: 100%;
-    max-height: 60px;
+    max-height: 56px;
     object-fit: contain;
 }
+.cart-item__img-fallback { font-size: 1.5rem; }
 
 .cart-item__body {
     flex: 1;
-    padding: 10px 12px;
+    padding: 11px 12px;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 4px;
+    gap: 5px;
     min-width: 0;
-}
-.cart-item__store {
-    font-size: .68rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .03em;
-    color: var(--muted);
 }
 .cart-item__name {
     font-size: .85rem;
@@ -791,9 +857,10 @@ html[data-theme="dark"] .badge-cache {
     overflow: hidden;
 }
 .cart-item__price {
-    font-size: .95rem;
+    font-size: 1.04rem;
     font-weight: 800;
     color: var(--indigo);
+    letter-spacing: -.01em;
 }
 
 .cart-item__actions {
@@ -804,6 +871,7 @@ html[data-theme="dark"] .badge-cache {
     gap: 6px;
     padding: 8px;
     border-left: 1px solid var(--stone);
+    background: color-mix(in srgb, var(--stone) 35%, transparent);
 }
 .cart-item__remove {
     width: 28px;
@@ -818,6 +886,7 @@ html[data-theme="dark"] .badge-cache {
 .cart-item__remove:hover {
     background: #FEF0F3;
     color: var(--danger);
+    transform: scale(1.08);
 }
 .cart-item__link {
     width: 28px;
@@ -832,23 +901,24 @@ html[data-theme="dark"] .badge-cache {
 .cart-item__link:hover {
     background: var(--sky-pale);
     color: var(--indigo);
+    transform: scale(1.08);
 }
 
 /* Estado vazio do carrinho */
 .cart-empty {
     text-align: center;
-    padding: 70px 20px;
+    padding: 56px 24px;
     color: var(--muted);
 }
-.cart-empty__icon {
-    font-size: 2.6rem;
-    display: block;
-    margin-bottom: 14px;
-    opacity: .7;
+.cart-empty__illo {
+    color: var(--indigo);
+    margin-bottom: 16px;
 }
 .cart-empty p {
     font-size: .92rem;
     line-height: 1.5;
+    max-width: 280px;
+    margin: 0 auto;
 }
 .cart-empty strong {
     display: block;
@@ -861,11 +931,29 @@ html[data-theme="dark"] .badge-cache {
 .cart-panel__footer {
     border-top: 1px solid var(--stone);
     background: var(--white);
-    padding: 18px 22px 22px;
+    padding: 16px 22px 22px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
 }
+
+/* Insight "melhor loja" — só aparece quando o carrinho tem itens de mais de
+   uma loja, e existe para dar uma razão prática de comparar (frete), não só
+   decorar o footer. */
+.cart-insight {
+    display: none;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--sky-pale);
+    color: var(--indigo);
+    font-size: .76rem;
+    line-height: 1.45;
+}
+.cart-insight svg { flex-shrink: 0; margin-top: 1px; }
+.cart-insight strong { font-weight: 700; }
+
 .cart-summary {
     display: flex;
     align-items: baseline;
@@ -875,11 +963,24 @@ html[data-theme="dark"] .badge-cache {
     font-size: .82rem;
     color: var(--muted);
 }
+.cart-summary__value-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+.cart-summary__currency {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--muted);
+}
 .cart-summary__value {
     font-family: var(--font-display);
-    font-size: 1.5rem;
+    font-size: 1.85rem;
     font-weight: 500;
     color: var(--text);
+    letter-spacing: -.01em;
+    font-feature-settings: "tnum";
 }
 .cart-summary__note {
     font-size: .72rem;
@@ -890,8 +991,13 @@ html[data-theme="dark"] .badge-cache {
     width: 100%;
     padding: 14px;
     border-radius: var(--radius-sm);
-    background: var(--indigo);
-    color: #fff;
+    /* BUG FIX: usava background: var(--indigo) + color: #fff fixo. No dark
+       mode --indigo vira uma cor clara (#D7E3F4), então o texto branco ficava
+       quase invisível sobre um fundo quase branco. --text inverte
+       corretamente entre os temas (escuro no claro, claro no escuro), então
+       o contraste botão/texto se mantém nos dois modos. */
+    background: var(--text);
+    color: var(--white);
     font-size: .92rem;
     font-weight: 600;
     text-align: center;
@@ -913,7 +1019,7 @@ html[data-theme="dark"] .badge-cache {
 }
 .cart-btn-viewall:hover::after { transform: translateX(120%); }
 .cart-btn-viewall:hover {
-    background: var(--indigo-light);
+    background: var(--indigo);
     transform: translateY(-1px);
     box-shadow: var(--shadow-md);
 }
@@ -1013,8 +1119,22 @@ html[data-theme="dark"] .badge-cache {
 }
 
 html[data-theme="dark"] .cart-toast__icon { background: var(--success); }
-html[data-theme="dark"] .cart-item__remove:hover { background: rgba(248,113,113,.12); }
+/* cart-item__remove usa #FEF0F3 (tom rosa claro hardcoded) — no dark mode isso
+   seria um blob claro discrepante; troca por um vermelho translúcido. */
+html[data-theme="dark"] .cart-item__remove:hover { background: rgba(248,113,113,.14); }
 html[data-theme="dark"] .product-card__add-cart.added { background: rgba(74,222,128,.12); border-color: rgba(74,222,128,.3); }
+/* cart-btn-viewall hover usa --indigo (cor clara no dark mode) — mantém o
+   botão em azul médio para não estourar o contraste. */
+html[data-theme="dark"] .cart-btn-viewall:hover { background: var(--sky); }
+/* product-card__best e badge usam tons hardcoded de verde claro — override. */
+html[data-theme="dark"] .product-card__best {
+    background: rgba(74,222,128,.10);
+    border-color: rgba(74,222,128,.28);
+}
+html[data-theme="dark"] .product-card__badge {
+    background: rgba(74,222,128,.10);
+    border-color: rgba(74,222,128,.28);
+}
 
 /* ── Responsive ──────────────────────────────────────────────────────────────── */
 @media (max-width: 860px) {
