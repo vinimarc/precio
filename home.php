@@ -545,7 +545,9 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
                 <span><?= htmlspecialchars($user['name']) ?></span>
             </div>
             <button class="cart-trigger" id="cart-trigger" aria-label="Abrir carrinho">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <span class="cart-trigger__glow" aria-hidden="true"></span>
+                <canvas class="cart3d-canvas" id="cart3d-canvas" aria-hidden="true"></canvas>
+                <svg class="cart-fallback-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
                     <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
                 </svg>
@@ -560,6 +562,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 
     <!-- ── Hero ──────────────────────────────────────────────────────────────── -->
     <main class="hero">
+        <canvas class="hero3d-canvas" id="hero3d-canvas" aria-hidden="true"></canvas>
         <h1 class="hero__title">
             O que você quer<br>
             <em>comprar hoje?</em>
@@ -715,6 +718,14 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
     </span>
     <span id="cart-toast-msg">Produto adicionado ao carrinho</span>
 </div>
+
+<!-- Three.js e GSAP via CDN — usados pelo carrinho 3D e pelas animações de
+     "voar para o carrinho" em assets/js/cart3d.js. Carregados de forma
+     defensiva: se falharem (rede bloqueada, ad-blocker), o site cai de
+     volta para o ícone plano original sem quebrar nada. -->
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="assets/js/cart3d.js"></script>
 
 <script>
 (function() {
@@ -1041,9 +1052,14 @@ function ligarBotoesCarrinho(scope) {
             const added = Cart.add(produto);
             if (added) {
                 btn.classList.add('added');
+                btn.classList.add('pop-anim');
+                setTimeout(() => btn.classList.remove('pop-anim'), 400);
                 btn.querySelector('.add-cart-label').textContent = 'No carrinho';
                 renderCartBadge();
                 showToast('Produto adicionado ao carrinho');
+                if (window.Cart3D) {
+                    window.Cart3D.flyToCart(btn, produto.imagem || btn.dataset.img);
+                }
             }
         });
     });
@@ -1232,11 +1248,20 @@ function mostrarResultados(data, tempo, doCache) {
                     </div>
                     <div class="product-card__actions">
                         <a class="product-card__cta" href="${escHtml(p.url)}" target="_blank" rel="noopener noreferrer">Ver na loja →</a>
-                        <button class="product-card__add-cart" type="button" data-produto="${produtoData}">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
-                                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-                            </svg>
+                        <button class="product-card__add-cart" type="button" data-produto="${produtoData}" data-img="${escHtml(p.imagem || '')}">
+                            <span class="flip-cart-icon">
+                                <span class="flip-cart-icon__face flip-cart-icon__face--front">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+                                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                                    </svg>
+                                </span>
+                                <span class="flip-cart-icon__face flip-cart-icon__face--back">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="20 6 9 17 4 12"/>
+                                    </svg>
+                                </span>
+                            </span>
                             <span class="add-cart-label">Adicionar</span>
                         </button>
                     </div>
@@ -1252,6 +1277,7 @@ function mostrarResultados(data, tempo, doCache) {
     resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     ligarBotoesCarrinho(resultsSection);
+    if (window.Cart3D) window.Cart3D.refreshTilt(resultsSection);
 }
 
 async function realizarBusca() {

@@ -305,10 +305,12 @@ function buscarViaJina(string $targetUrl, string $loja, string $query, int $quan
     }
 
     return match($loja) {
-        'pichau' => parsePichauMarkdown($markdown, $quantidade),
-        'kabum'  => parseKabumMarkdown($markdown, $quantidade),
-        'amazon' => parseAmazonMarkdown($markdown, $quantidade),
-        default  => ['total' => 0, 'produtos' => []],
+        'pichau'   => parsePichauMarkdown($markdown, $quantidade),
+        'kabum'    => parseKabumMarkdown($markdown, $quantidade),
+        'amazon'   => parseAmazonMarkdown($markdown, $quantidade),
+        'magalu'   => parseMagaluMarkdown($markdown, $quantidade),
+        'terabyte' => parseTerabyteMarkdown($markdown, $quantidade),
+        default    => ['total' => 0, 'produtos' => []],
     };
 }
 
@@ -444,7 +446,94 @@ function parseAmazonMarkdown(string $markdown, int $quantidade): array
     return ['total' => count($produtos), 'produtos' => $produtos];
 }
 
-// ── BUSCA PARALELA NAS 3 LOJAS ────────────────────────────────────────────────
+// ── MAGAZINE LUIZA e TERABYTE SHOP ────────────────────────────────────────────
+// IMPORTANTE: ao contrário dos parsers de Pichau/KaBuM!/Amazon (que foram
+// calibrados e ajustados em cima de respostas reais do Jina Reader), estes
+// dois foram escritos sem acesso a uma resposta real dessas lojas — o
+// ambiente onde este código foi gerado não tem acesso à internet para testar
+// contra magazineluiza.com.br / terabyteshop.com.br / r.jina.ai.
+// Por isso o parser é deliberadamente mais tolerante (genérico) do que os
+// outros. Use o script test_scraper.php (na raiz do projeto) para rodar
+// contra os sites reais, ver o markdown bruto salvo em debug_<loja>.md e
+// ajustar o regex de parseGenericLojaMarkdown() caso o layout real não bata.
+function parseMagaluMarkdown(string $markdown, int $quantidade): array
+{
+    return parseGenericLojaMarkdown($markdown, $quantidade, 'https://www.magazineluiza.com.br/', 'Magazine Luiza');
+}
+
+function parseTerabyteMarkdown(string $markdown, int $quantidade): array
+{
+    return parseGenericLojaMarkdown($markdown, $quantidade, 'https://www.terabyteshop.com.br/', 'Terabyte Shop');
+}
+
+// Parser genérico: procura um bloco "imagem -> ... -> [nome do produto](url da loja) -> ... preço em R$"
+// Mais tolerante que os parsers dedicados porque não conhecemos o HTML/markdown exato dessas lojas.
+function parseGenericLojaMarkdown(string $markdown, int $quantidade, string $dominioLoja, string $nomeLoja): array
+{
+    $produtos = [];
+    $vistos   = [];
+
+    $dominioPattern = preg_quote($dominioLoja, '/');
+
+    // imagem -> até 600 chars de "ruído" (badges/avaliação/frete) -> [nome](url do produto na loja) -> até 400 chars (geralmente o preço)
+    $pattern = '/!\[(?:Image\s*\d+)?[^\]]*\]\((https?:\/\/[^)\s]+?\.(?:jpg|jpeg|png|webp)[^)\s]*)\)'
+             . '(.{0,600}?)'
+             . '\[([^\[\]]{3,200})\]\((' . $dominioPattern . '[^)\s]+)\)'
+             . '(.{0,400}?)(?=!\[(?:Image\s*\d+)?|$)/su';
+
+    if (!preg_match_all($pattern, $markdown, $matches, PREG_SET_ORDER)) {
+        return ['total' => 0, 'produtos' => []];
+    }
+
+    foreach ($matches as $match) {
+        if (count($produtos) >= $quantidade) break;
+
+        $imagem = $match[1];
+        $nome   = trim(preg_replace('/\s+/u', ' ', $match[3]));
+        $url    = $match[4];
+        $cauda  = trim(preg_replace('/\s+/u', ' ', $match[5]));
+
+        if ($nome === '' || strlen($nome) > 220 || str_contains($nome, '](')) continue;
+        if (isset($vistos[$url])) continue;
+
+        // O preço normalmente vem logo após o nome/link. Se não vier, tenta o
+        // texto entre a imagem e o link (caso o layout da loja seja invertido).
+        $trechoPreco = preg_split(
+            '/\s+(?:Entrega|Frete|Enviado|Apenas|Mais opções|Comprar|Em até|No PIX|À vista|ou\s+\d+x)\b/iu',
+            $cauda,
+            2
+        )[0] ?? $cauda;
+
+        if (!preg_match_all('/R\$ ?([\d\.,]+)/u', $trechoPreco, $precosMatch) || !$precosMatch[1]) {
+            $textoEntre = trim(preg_replace('/\s+/u', ' ', $match[2]));
+            if (!preg_match_all('/R\$ ?([\d\.,]+)/u', $textoEntre, $precosMatch) || !$precosMatch[1]) continue;
+        }
+
+        $valores   = $precosMatch[1];
+        $preco     = moedaParaFloat(end($valores));
+        $precoOrig = count($valores) > 1 ? moedaParaFloat($valores[0]) : null;
+
+        if ($preco <= 0) continue;
+
+        $vistos[$url] = true;
+        $produtos[] = [
+            'nome'       => $nome,
+            'sku'        => '',
+            'preco'      => $preco,
+            'preco_orig' => $precoOrig && $precoOrig != $preco ? $precoOrig : null,
+            'desconto'   => null,
+            'url'        => $url,
+            'imagem'     => $imagem,
+            'em_estoque' => true,
+            'loja'       => $nomeLoja,
+        ];
+    }
+
+    ordenarProdutosPorPreco($produtos);
+    return ['total' => count($produtos), 'produtos' => $produtos];
+}
+
+// ── BUSCA PARALELA NAS 5 LOJAS ────────────────────────────────────────────────
 function buscarProdutosMultisite(string $query): array
 {
     // 1. Monta os 3 handles cURL em paralelo (Pichau via GraphQL + KaBuM + Amazon via Jina)
@@ -479,9 +568,11 @@ function buscarProdutosMultisite(string $query): array
     ];
 
     $handles = [
-        'pichau' => buildCurlHandle('https://www.pichau.com.br/graphql', $pichauHeaders, $payload, 'POST'),
-        'kabum'  => buildCurlHandle('https://r.jina.ai/https://www.kabum.com.br/busca/' . rawurlencode($query), $jinaHeaders),
-        'amazon' => buildCurlHandle('https://r.jina.ai/https://www.amazon.com.br/s?k=' . rawurlencode($query), $jinaHeaders),
+        'pichau'   => buildCurlHandle('https://www.pichau.com.br/graphql', $pichauHeaders, $payload, 'POST'),
+        'kabum'    => buildCurlHandle('https://r.jina.ai/https://www.kabum.com.br/busca/' . rawurlencode($query), $jinaHeaders),
+        'amazon'   => buildCurlHandle('https://r.jina.ai/https://www.amazon.com.br/s?k=' . rawurlencode($query), $jinaHeaders),
+        'magalu'   => buildCurlHandle('https://r.jina.ai/https://www.magazineluiza.com.br/busca/' . rawurlencode($query) . '/', $jinaHeaders),
+        'terabyte' => buildCurlHandle('https://r.jina.ai/https://www.terabyteshop.com.br/busca?str=' . rawurlencode($query), $jinaHeaders),
     ];
 
     // 2. Dispara todos em paralelo
@@ -528,15 +619,23 @@ function buscarProdutosMultisite(string $query): array
         $pichauData = $fallback['produtos'] ?? [];
     }
 
-    // 4. Processa KaBuM
-    $kabumData  = parseKabumMarkdown((string)($responses['kabum']['body']  ?? ''), 30);
-    $amazonData = parseAmazonMarkdown((string)($responses['amazon']['body'] ?? ''), 30);
+    // 4. Processa KaBuM, Amazon, Magazine Luiza e Terabyte Shop
+    $kabumData    = parseKabumMarkdown((string)($responses['kabum']['body']    ?? ''), 30);
+    $amazonData   = parseAmazonMarkdown((string)($responses['amazon']['body']  ?? ''), 30);
+    $magaluData   = parseMagaluMarkdown((string)($responses['magalu']['body']  ?? ''), 30);
+    $terabyteData = parseTerabyteMarkdown((string)($responses['terabyte']['body'] ?? ''), 30);
 
     // 5. Junta e filtra por relevância
     $produtos = [];
     $avisos   = [];
 
-    foreach ([$pichauData, $kabumData['produtos'] ?? [], $amazonData['produtos'] ?? []] as $lista) {
+    foreach ([
+        $pichauData,
+        $kabumData['produtos']    ?? [],
+        $amazonData['produtos']   ?? [],
+        $magaluData['produtos']   ?? [],
+        $terabyteData['produtos'] ?? [],
+    ] as $lista) {
         foreach ($lista as $produto) {
             if (produtoCombinaComBusca($produto, $query)) {
                 $produtos[] = $produto;
@@ -544,7 +643,7 @@ function buscarProdutosMultisite(string $query): array
         }
     }
 
-    foreach ([$kabumData, $amazonData] as $fonte) {
+    foreach ([$kabumData, $amazonData, $magaluData, $terabyteData] as $fonte) {
         if (!empty($fonte['aviso'])) $avisos[] = $fonte['aviso'];
     }
 
@@ -560,7 +659,7 @@ function buscarProdutosMultisite(string $query): array
     return [
         'total'   => count($produtos),
         'produtos' => $produtos,
-        'fonte'   => 'Pichau, KaBuM! e Amazon',
+        'fonte'   => 'Pichau, KaBuM!, Amazon, Magazine Luiza e Terabyte Shop',
         'lojas'   => $lojas,
         'aviso'   => $avisos ? implode(' ', array_unique($avisos)) : '',
     ];
