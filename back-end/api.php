@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/logger.php';
+require_once __DIR__ . '/includes/settings.php';
 
 header('Content-Type: application/json');
 
@@ -18,16 +20,18 @@ if ($action === 'login') {
     }
 
     $db   = getDB();
-    $stmt = $db->prepare('SELECT id, name, email, password FROM users WHERE email = ? LIMIT 1');
+    $stmt = $db->prepare('SELECT id, name, email, password, role FROM users WHERE email = ? LIMIT 1');
     $stmt->execute([$email]);
     $user = $stmt->fetch();
 
     if (!$user || !password_verify($password, $user['password'])) {
+        logMsg('WARNING', 'auth', "Tentativa de login falhou para {$email}.");
         echo json_encode(['success' => false, 'message' => 'E-mail ou senha incorretos.']);
         exit;
     }
 
     loginUser($user);
+    logMsg('INFO', 'auth', "Login bem-sucedido: {$user['email']}.");
     echo json_encode(['success' => true, 'redirect' => 'home.php']);
     exit;
 }
@@ -65,12 +69,17 @@ if ($action === 'register') {
         exit;
     }
 
+    // O primeiro usuário cadastrado no sistema vira administrador.
+    $totalUsuarios = (int) $db->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    $role = $totalUsuarios === 0 ? 'admin' : 'user';
+
     $hash = password_hash($password, PASSWORD_BCRYPT);
-    $stmt = $db->prepare('INSERT INTO users (name, email, password) VALUES (?, ?, ?)');
-    $stmt->execute([$name, $email, $hash]);
+    $stmt = $db->prepare('INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)');
+    $stmt->execute([$name, $email, $hash, $role]);
     $id   = (int) $db->lastInsertId();
 
-    loginUser(['id' => $id, 'name' => $name, 'email' => $email]);
+    loginUser(['id' => $id, 'name' => $name, 'email' => $email, 'role' => $role]);
+    logMsg('INFO', 'auth', "Novo cadastro: {$email}" . ($role === 'admin' ? ' (promovido a admin, primeiro usuário)' : '') . '.');
     echo json_encode(['success' => true, 'redirect' => 'home.php']);
     exit;
 }
@@ -85,7 +94,7 @@ if ($action === 'logout') {
 // ── CACHE ─────────────────────────────────────────────────────────────────────
 // Cache simples em arquivo. TTL: 10 minutos. Evita buscas redundantes.
 define('CACHE_DIR', __DIR__ . '/cache');
-define('CACHE_TTL', 600); // segundos
+define('CACHE_TTL', ((int) getSetting('cache_ttl_minutes')) * 60); // segundos, configurável no painel admin
 
 function cacheGet(string $key): ?array
 {
@@ -764,25 +773,29 @@ if ($action === 'search') {
     }
 
     // Verifica cache
+    $inicio   = microtime(true);
     $cacheKey = 'search_' . strtolower($busca);
     $cached   = cacheGet($cacheKey);
 
     if ($cached !== null) {
-        // Cache hit: retorna instantaneamente, marcando que veio do cache
+        // Cache hit: mede o tempo real desta requisição (leitura do cache),
+        // em vez de reaproveitar o tempo da busca original que gerou o cache.
+        $tempoCache = round((microtime(true) - $inicio), 2);
+        registrarPesquisa($busca, count($cached['data']['produtos'] ?? []), 'cache');
         echo json_encode([
             'success'  => true,
             'data'     => $cached['data'],
-            'tempo'    => $cached['tempo'],
+            'tempo'    => $tempoCache,
             'do_cache' => true,
         ]);
         exit;
     }
 
-    $inicio    = microtime(true);
     $resultado = buscarProdutosMultisite($busca);
     $tempo     = round((microtime(true) - $inicio), 2);
 
     if (isset($resultado['erro'])) {
+        logMsg('ERROR', 'scraper.search', "Busca por \"{$busca}\" falhou: {$resultado['erro']}");
         echo json_encode(['success' => false, 'message' => $resultado['erro']]);
         exit;
     }
@@ -792,6 +805,9 @@ if ($action === 'search') {
         cacheSet($cacheKey, ['data' => $resultado, 'tempo' => $tempo]);
     }
 
+    registrarPesquisa($busca, count($resultado['produtos'] ?? []), 'live');
+    logMsg('INFO', 'scraper.search', "Busca por \"{$busca}\" concluída em {$tempo}s com " . count($resultado['produtos'] ?? []) . ' produtos.');
+
     echo json_encode([
         'success'  => true,
         'data'     => $resultado,
@@ -799,6 +815,21 @@ if ($action === 'search') {
         'do_cache' => false,
     ]);
     exit;
+}
+
+/**
+ * Grava uma pesquisa no histórico real (tabela search_log), usado
+ * pelo painel administrativo. Falhas aqui nunca devem quebrar a busca.
+ */
+function registrarPesquisa(string $termo, int $resultados, string $origem): void
+{
+    try {
+        $db   = getDB();
+        $stmt = $db->prepare('INSERT INTO search_log (user_id, term, results_count, source) VALUES (?, ?, ?, ?)');
+        $stmt->execute([$_SESSION['user_id'] ?? null, mb_substr($termo, 0, 120), $resultados, $origem]);
+    } catch (\Throwable $e) {
+        logMsg('WARNING', 'search_log', 'Não foi possível registrar o histórico de pesquisa: ' . $e->getMessage());
+    }
 }
 
 echo json_encode(['success' => false, 'message' => 'Ação inválida.']);

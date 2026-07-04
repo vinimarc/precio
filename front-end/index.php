@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/../back-end/includes/auth.php';
 if (isLoggedIn()) {
     header('Location: home.php');
     exit;
@@ -177,7 +177,7 @@ function hideAlert(id) {
 async function apiPost(data) {
     const fd = new FormData();
     for (const [k, v] of Object.entries(data)) fd.append(k, v);
-    const res  = await fetch('api.php', { method: 'POST', body: fd });
+    const res  = await fetch('../back-end/api.php', { method: 'POST', body: fd });
     return res.json();
 }
 

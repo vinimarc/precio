@@ -1,0 +1,576 @@
+(function () {
+    'use strict';
+
+    const shell = document.querySelector('.admin-shell');
+    const root = document.documentElement;
+    const charts = {};
+    const API = '../back-end/admin_api.php';
+
+    // ── HELPERS ──────────────────────────────────────────────────────────────
+    function cssVar(name) {
+        return getComputedStyle(root).getPropertyValue(name).trim();
+    }
+
+    function showToast(message, isError) {
+        const toastEl = document.getElementById('adminToast');
+        if (!toastEl || !window.bootstrap) return;
+        toastEl.querySelector('.toast-body').textContent = message || 'Ação concluída.';
+        toastEl.classList.toggle('text-bg-danger', !!isError);
+        bootstrap.Toast.getOrCreateInstance(toastEl, { delay: 3200 }).show();
+    }
+
+    function fmtBRL(value) {
+        const n = Number(value);
+        if (Number.isNaN(n)) return '—';
+        return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    }
+
+    function fmtDate(value) {
+        if (!value) return '—';
+        const isTimestamp = typeof value === 'number' || /^\d+$/.test(value);
+        const date = isTimestamp ? new Date(Number(value) * 1000) : new Date(value.replace(' ', 'T'));
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str ?? '';
+        return div.innerHTML;
+    }
+
+    async function callApi(action, params) {
+        const body = new URLSearchParams({ action, ...(params || {}) });
+        try {
+            const res = await fetch(API, { method: 'POST', body });
+            if (res.status === 401 || res.status === 403) {
+                showToast('Sessão expirada ou acesso negado. Recarregando...', true);
+                setTimeout(() => window.location.reload(), 1500);
+                return { success: false };
+            }
+            return await res.json();
+        } catch (err) {
+            showToast('Falha de conexão com o servidor.', true);
+            return { success: false, message: 'Falha de conexão.' };
+        }
+    }
+
+    function renderPagination(container, state, totalPages, totalItems, onChange) {
+        if (!container) return;
+        container.innerHTML = '';
+
+        const summary = document.createElement('span');
+        summary.className = 'me-auto text-muted small align-self-center';
+        summary.textContent = `${totalItems} registro(s)`;
+        container.appendChild(summary);
+
+        for (let page = 1; page <= totalPages; page += 1) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `btn btn-sm ${page === state.page ? 'btn-primary' : 'btn-soft'}`;
+            button.textContent = page;
+            button.addEventListener('click', () => {
+                state.page = page;
+                onChange();
+            });
+            container.appendChild(button);
+        }
+    }
+
+    function debounce(fn, delay) {
+        let timer = null;
+        return (...args) => {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn(...args), delay);
+        };
+    }
+
+    // ── NAVIGATION ───────────────────────────────────────────────────────────
+    const sectionLoaders = {};
+
+    function setSection(sectionId) {
+        const fallback = document.getElementById(sectionId) ? sectionId : 'dashboard';
+
+        document.querySelectorAll('[data-section]').forEach((section) => {
+            section.classList.toggle('active', section.id === fallback);
+        });
+        document.querySelectorAll('[data-section-link]').forEach((link) => {
+            link.classList.toggle('active', link.dataset.sectionLink === fallback);
+        });
+
+        if (history.replaceState) history.replaceState(null, '', '#' + fallback);
+        shell?.classList.remove('sidebar-open');
+
+        if (sectionLoaders[fallback]) sectionLoaders[fallback]();
+        requestAnimationFrame(() => Object.values(charts).forEach((c) => c.resize()));
+    }
+
+    function initNavigation() {
+        document.querySelectorAll('[data-section-link]').forEach((link) => {
+            link.addEventListener('click', (event) => {
+                event.preventDefault();
+                setSection(link.dataset.sectionLink);
+            });
+        });
+        setSection(window.location.hash ? window.location.hash.slice(1) : 'dashboard');
+    }
+
+    function initSidebar() {
+        document.getElementById('sidebarToggle')?.addEventListener('click', () => {
+            if (window.matchMedia('(max-width: 991px)').matches) {
+                shell?.classList.toggle('sidebar-open');
+                return;
+            }
+            const current = shell?.dataset.sidebar || 'expanded';
+            shell.dataset.sidebar = current === 'expanded' ? 'collapsed' : 'expanded';
+        });
+        document.querySelectorAll('[data-sidebar-close]').forEach((el) => {
+            el.addEventListener('click', () => shell?.classList.remove('sidebar-open'));
+        });
+    }
+
+    function initTheme() {
+        const stored = localStorage.getItem('precio-admin-theme');
+        const preferred = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        const theme = stored || preferred;
+        root.dataset.theme = theme;
+        updateThemeButton(theme);
+
+        document.getElementById('themeToggle')?.addEventListener('click', () => {
+            const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+            root.dataset.theme = next;
+            localStorage.setItem('precio-admin-theme', next);
+            updateThemeButton(next);
+            Object.values(charts).forEach((c) => c.destroy());
+            loadDashboard(true);
+        });
+    }
+
+    function updateThemeButton(theme) {
+        const icon = document.querySelector('#themeToggle i');
+        if (icon) icon.className = theme === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
+    }
+
+    function initGlobalSearch() {
+        const input = document.getElementById('globalSearch');
+        if (!input) return;
+        document.addEventListener('keydown', (event) => {
+            if (event.key === '/' && document.activeElement !== input) {
+                event.preventDefault();
+                input.focus();
+            }
+        });
+        input.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            const query = input.value.trim().toLowerCase();
+            if (!query) return;
+            const target = Array.from(document.querySelectorAll('[data-section]')).find((s) => s.textContent.toLowerCase().includes(query));
+            if (target) {
+                setSection(target.id);
+                showToast(`Seção encontrada: ${target.querySelector('h1')?.textContent || target.id}.`);
+            } else {
+                showToast('Nenhuma seção encontrada.');
+            }
+        });
+    }
+
+    // ── CHARTS ───────────────────────────────────────────────────────────────
+    function chartColors() {
+        return {
+            text: cssVar('--admin-muted'),
+            grid: cssVar('--admin-border'),
+            primary: cssVar('--admin-primary'),
+            success: cssVar('--admin-success'),
+        };
+    }
+
+    function baseChartOptions(extra) {
+        const colors = chartColors();
+        return Object.assign({
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { labels: { color: colors.text, boxWidth: 12, usePointStyle: true } },
+                tooltip: { backgroundColor: '#0f172a', padding: 12, titleFont: { weight: '700' } }
+            },
+            scales: {
+                x: { ticks: { color: colors.text }, grid: { color: colors.grid } },
+                y: { ticks: { color: colors.text }, grid: { color: colors.grid }, beginAtZero: true }
+            }
+        }, extra || {});
+    }
+
+    function upsertChart(id, factory) {
+        const canvas = document.getElementById(id);
+        if (!canvas || !window.Chart) return;
+        if (charts[id]) charts[id].destroy();
+        charts[id] = new Chart(canvas, factory());
+    }
+
+    // ── DASHBOARD ────────────────────────────────────────────────────────────
+    async function loadDashboard() {
+        const grid = document.getElementById('statsGrid');
+        const resp = await callApi('stats');
+        if (!resp.success) {
+            grid.innerHTML = '<div class="empty-state">Não foi possível carregar as estatísticas.</div>';
+            return;
+        }
+        const d = resp.data;
+        const cards = [
+            ['Usuários Cadastrados', d.total_usuarios, 'bi-people'],
+            ['Administradores', d.total_admins, 'bi-shield-check'],
+            ['Pesquisas Hoje', d.buscas_hoje, 'bi-search'],
+            ['Pesquisas Totais', d.buscas_total, 'bi-graph-up-arrow'],
+            ['Produtos em Cache', d.produtos_cache, 'bi-box-seam'],
+            ['Lojas com Dados', d.lojas_ativas, 'bi-shop'],
+            ['Arquivos de Cache', d.cache_arquivos, 'bi-hdd-stack'],
+            ['Tamanho do Cache', `${d.cache_tamanho_kb} KB`, 'bi-database'],
+        ];
+        grid.innerHTML = cards.map(([label, value, icon]) => `
+            <article class="metric-card">
+                <div class="metric-icon"><i class="bi ${icon}"></i></div>
+                <div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>
+            </article>
+        `).join('');
+
+        upsertChart('searchesLineChart', () => ({
+            type: 'line',
+            data: {
+                labels: d.chart_buscas.labels,
+                datasets: [{
+                    label: 'Pesquisas', data: d.chart_buscas.values,
+                    borderColor: chartColors().primary, backgroundColor: 'rgba(37, 99, 235, .12)',
+                    borderWidth: 3, fill: true, tension: .38, pointRadius: 4,
+                }]
+            },
+            options: baseChartOptions()
+        }));
+
+        upsertChart('storesBarChart', () => ({
+            type: 'bar',
+            data: {
+                labels: d.chart_lojas.labels,
+                datasets: [{ label: 'Produtos', data: d.chart_lojas.values, backgroundColor: chartColors().success, borderRadius: 7 }]
+            },
+            options: baseChartOptions({ plugins: { legend: { display: false } } })
+        }));
+
+        const topBody = document.getElementById('topTermsBody');
+        topBody.innerHTML = d.top_termos.length
+            ? d.top_termos.map((t) => `<tr><td><strong>${escapeHtml(t.term)}</strong></td><td>${escapeHtml(String(t.total))}</td></tr>`).join('')
+            : '<tr><td colspan="2" class="text-muted">Nenhuma pesquisa registrada ainda.</td></tr>';
+    }
+
+    // ── HISTÓRICO ────────────────────────────────────────────────────────────
+    const historicoState = { page: 1, q: '' };
+
+    async function loadHistorico() {
+        const body = document.getElementById('historicoBody');
+        body.innerHTML = '<tr><td colspan="5" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('searches_list', { page: historicoState.page, q: historicoState.q });
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="5" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+
+        body.innerHTML = resp.items.length ? resp.items.map((row) => `
+            <tr>
+                <td><strong>${escapeHtml(row.term)}</strong></td>
+                <td>${escapeHtml(row.user_name || 'Anônimo')}</td>
+                <td><span class="status-badge status-${row.source === 'cache' ? 'neutral' : 'success'}"><i></i>${row.source === 'cache' ? 'Cache' : 'Ao vivo'}</span></td>
+                <td>${escapeHtml(String(row.results_count))}</td>
+                <td>${fmtDate(row.created_at)}</td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-muted">Nenhuma pesquisa encontrada.</td></tr>';
+
+        renderPagination(document.getElementById('historicoPagination'), historicoState, resp.total_pages, resp.total, loadHistorico);
+    }
+
+    // ── PRODUTOS ─────────────────────────────────────────────────────────────
+    const produtosState = { page: 1, q: '', loja: '' };
+    let produtosStoresLoaded = false;
+
+    async function loadProdutosStores() {
+        if (produtosStoresLoaded) return;
+        const resp = await callApi('stores_list');
+        if (!resp.success) return;
+        const select = document.getElementById('produtosLoja');
+        resp.data.forEach((s) => {
+            const opt = document.createElement('option');
+            opt.value = s.loja;
+            opt.textContent = s.loja;
+            select.appendChild(opt);
+        });
+        produtosStoresLoaded = true;
+    }
+
+    async function loadProdutos() {
+        await loadProdutosStores();
+        const body = document.getElementById('produtosBody');
+        body.innerHTML = '<tr><td colspan="7" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('products_list', { page: produtosState.page, q: produtosState.q, loja: produtosState.loja });
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="7" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+
+        body.innerHTML = resp.items.length ? resp.items.map((p) => `
+            <tr>
+                <td><img class="product-thumb" src="${escapeHtml(p.imagem)}" alt="" onerror="this.style.visibility='hidden'"></td>
+                <td><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener"><strong>${escapeHtml(p.nome)}</strong></a></td>
+                <td>${fmtBRL(p.preco)}</td>
+                <td>${escapeHtml(p.loja)}</td>
+                <td><span class="status-badge status-${p.em_estoque ? 'success' : 'danger'}"><i></i>${p.em_estoque ? 'Em estoque' : 'Esgotado'}</span></td>
+                <td>${fmtDate(p.updated_at)}</td>
+                <td class="table-actions">
+                    <button class="btn btn-sm btn-soft" data-edit-product='${JSON.stringify(p).replace(/'/g, '&apos;')}'><i class="bi bi-pencil"></i> Editar</button>
+                    <button class="btn btn-sm btn-soft-danger" data-delete-product="${p.id}"><i class="bi bi-trash"></i> Excluir</button>
+                </td>
+            </tr>`).join('') : '<tr><td colspan="7" class="text-muted">Nenhum produto em cache. Faça uma busca no site para popular o catálogo.</td></tr>';
+
+        renderPagination(document.getElementById('produtosPagination'), produtosState, resp.total_pages, resp.total, loadProdutos);
+    }
+
+    function initProdutos() {
+        document.getElementById('produtosSearch')?.addEventListener('input', debounce((e) => {
+            produtosState.q = e.target.value.trim();
+            produtosState.page = 1;
+            loadProdutos();
+        }, 350));
+        document.getElementById('produtosLoja')?.addEventListener('change', (e) => {
+            produtosState.loja = e.target.value;
+            produtosState.page = 1;
+            loadProdutos();
+        });
+
+        document.getElementById('produtosBody')?.addEventListener('click', (event) => {
+            const editBtn = event.target.closest('[data-edit-product]');
+            if (editBtn) {
+                const p = JSON.parse(editBtn.dataset.editProduct.replace(/&apos;/g, "'"));
+                document.getElementById('productId').value = p.id;
+                document.getElementById('productName').value = p.nome;
+                document.getElementById('productPrice').value = p.preco;
+                document.getElementById('productStock').checked = !!p.em_estoque;
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('productModal')).show();
+                return;
+            }
+            const delBtn = event.target.closest('[data-delete-product]');
+            if (delBtn) {
+                if (!confirm('Remover este produto do cache?')) return;
+                callApi('products_delete', { id: delBtn.dataset.deleteProduct }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadProdutos();
+                });
+            }
+        });
+
+        document.getElementById('productForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const resp = await callApi('products_update', {
+                id: document.getElementById('productId').value,
+                nome: document.getElementById('productName').value,
+                preco: document.getElementById('productPrice').value,
+                em_estoque: document.getElementById('productStock').checked ? '1' : '0',
+            });
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                bootstrap.Modal.getInstance(document.getElementById('productModal'))?.hide();
+                loadProdutos();
+            }
+        });
+
+        async function clearCache() {
+            if (!confirm('Isso apaga todo o cache de buscas. As próximas pesquisas serão refeitas nas lojas. Continuar?')) return;
+            const resp = await callApi('cache_clear');
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                loadProdutos();
+                loadScrapers();
+                loadDashboard();
+            }
+        }
+        document.getElementById('clearCacheBtn')?.addEventListener('click', clearCache);
+        document.getElementById('clearCacheBtn2')?.addEventListener('click', clearCache);
+    }
+
+    // ── SCRAPERS (MONITORAMENTO) ────────────────────────────────────────────
+    async function loadScrapers() {
+        const body = document.getElementById('storesBody');
+        body.innerHTML = '<tr><td colspan="4" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('stores_list');
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="4" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+
+        body.innerHTML = resp.data.length ? resp.data.map((s) => `
+            <tr>
+                <td><strong>${escapeHtml(s.loja)}</strong></td>
+                <td>${escapeHtml(String(s.produtos))}</td>
+                <td>${escapeHtml(String(s.em_estoque))}</td>
+                <td>${fmtDate(s.ultima_coleta)}</td>
+            </tr>`).join('') : '<tr><td colspan="4" class="text-muted">Nenhum dado de coleta ainda. Faça uma busca no site.</td></tr>';
+    }
+
+    // ── LOGS ─────────────────────────────────────────────────────────────────
+    let currentLogLevel = 'ALL';
+
+    async function loadLogs() {
+        const list = document.getElementById('logList');
+        list.innerHTML = '<div class="text-muted p-3">Carregando...</div>';
+        const resp = await callApi('logs_list', { level: currentLogLevel });
+        if (!resp.success) { list.innerHTML = '<div class="text-danger p-3">Erro ao carregar logs.</div>'; return; }
+
+        list.innerHTML = resp.data.length ? resp.data.map((log) => `
+            <div class="log-row" data-level="${escapeHtml(log.level)}">
+                <span class="log-level level-${log.level === 'ERROR' || log.level === 'CRITICAL' ? 'danger' : log.level === 'WARNING' ? 'warning' : 'success'}">${escapeHtml(log.level)}</span>
+                <span>${escapeHtml(log.date)}</span>
+                <strong>${escapeHtml(log.source)}</strong>
+                <p>${escapeHtml(log.message)}</p>
+            </div>`).join('') : '<div class="text-muted p-3">Nenhum evento registrado ainda.</div>';
+    }
+
+    function initLogs() {
+        document.querySelectorAll('[data-log-filter]').forEach((button) => {
+            button.addEventListener('click', () => {
+                currentLogLevel = button.dataset.logFilter;
+                document.querySelectorAll('[data-log-filter]').forEach((item) => {
+                    item.classList.toggle('btn-primary', item === button);
+                    item.classList.toggle('btn-soft', item !== button);
+                });
+                loadLogs();
+            });
+        });
+        document.getElementById('clearLogsBtn')?.addEventListener('click', async () => {
+            if (!confirm('Limpar todo o log do sistema?')) return;
+            const resp = await callApi('logs_clear');
+            showToast(resp.message, !resp.success);
+            if (resp.success) loadLogs();
+        });
+    }
+
+    // ── USUÁRIOS ─────────────────────────────────────────────────────────────
+    const usersState = { page: 1, q: '' };
+
+    async function loadUsers() {
+        const body = document.getElementById('usersBody');
+        body.innerHTML = '<tr><td colspan="5" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('users_list', { page: usersState.page, q: usersState.q });
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="5" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+
+        body.innerHTML = resp.items.length ? resp.items.map((u) => `
+            <tr>
+                <td><strong>${escapeHtml(u.name)}</strong></td>
+                <td>${escapeHtml(u.email)}</td>
+                <td>${fmtDate(u.created_at)}</td>
+                <td><span class="status-badge status-${u.role === 'admin' ? 'success' : 'neutral'}"><i></i>${u.role === 'admin' ? 'Administrador' : 'Usuário'}</span></td>
+                <td class="table-actions">
+                    <button class="btn btn-sm btn-soft" data-edit-user='${JSON.stringify(u).replace(/'/g, '&apos;')}'><i class="bi bi-pencil"></i> Editar</button>
+                    <button class="btn btn-sm btn-soft-danger" data-delete-user="${u.id}"><i class="bi bi-trash"></i> Excluir</button>
+                </td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-muted">Nenhum usuário encontrado.</td></tr>';
+
+        renderPagination(document.getElementById('usersPagination'), usersState, resp.total_pages, resp.total, loadUsers);
+    }
+
+    function openUserModal(user) {
+        document.getElementById('userModalTitle').textContent = user ? 'Editar usuário' : 'Novo usuário';
+        document.getElementById('userId').value = user ? user.id : '';
+        document.getElementById('userName').value = user ? user.name : '';
+        document.getElementById('userEmail').value = user ? user.email : '';
+        document.getElementById('userPassword').value = '';
+        document.getElementById('userPassword').required = !user;
+        document.getElementById('userPasswordHint').textContent = user ? '(deixe em branco para manter a atual)' : '';
+        document.getElementById('userRole').value = user ? user.role : 'user';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('userModal')).show();
+    }
+
+    function initUsers() {
+        document.getElementById('usersSearch')?.addEventListener('input', debounce((e) => {
+            usersState.q = e.target.value.trim();
+            usersState.page = 1;
+            loadUsers();
+        }, 350));
+
+        document.getElementById('newUserBtn')?.addEventListener('click', () => openUserModal(null));
+
+        document.getElementById('usersBody')?.addEventListener('click', (event) => {
+            const editBtn = event.target.closest('[data-edit-user]');
+            if (editBtn) {
+                openUserModal(JSON.parse(editBtn.dataset.editUser.replace(/&apos;/g, "'")));
+                return;
+            }
+            const delBtn = event.target.closest('[data-delete-user]');
+            if (delBtn) {
+                if (!confirm('Excluir este usuário permanentemente?')) return;
+                callApi('users_delete', { id: delBtn.dataset.deleteUser }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadUsers();
+                });
+            }
+        });
+
+        document.getElementById('userForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const id = document.getElementById('userId').value;
+            const payload = {
+                name: document.getElementById('userName').value,
+                email: document.getElementById('userEmail').value,
+                password: document.getElementById('userPassword').value,
+                role: document.getElementById('userRole').value,
+            };
+            const resp = id
+                ? await callApi('users_update', { id, ...payload })
+                : await callApi('users_create', payload);
+
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                bootstrap.Modal.getInstance(document.getElementById('userModal'))?.hide();
+                loadUsers();
+            }
+        });
+    }
+
+    // ── CONFIGURAÇÕES ────────────────────────────────────────────────────────
+    async function loadSettings() {
+        const resp = await callApi('settings_get');
+        if (resp.success) document.getElementById('cacheTtlInput').value = resp.data.cache_ttl_minutes;
+    }
+
+    function initSettings() {
+        document.getElementById('settingsForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const resp = await callApi('settings_update', { cache_ttl_minutes: document.getElementById('cacheTtlInput').value });
+            showToast(resp.message, !resp.success);
+        });
+
+        document.getElementById('profileForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const resp = await callApi('profile_update', {
+                name: document.getElementById('profileName').value,
+                email: document.getElementById('profileEmail').value,
+                password: document.getElementById('profilePassword').value,
+            });
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                document.getElementById('profilePassword').value = '';
+                document.querySelector('.profile-copy strong').textContent = document.getElementById('profileName').value;
+                document.querySelector('.profile-copy small').textContent = document.getElementById('profileEmail').value;
+            }
+        });
+    }
+
+    // ── BOOT ─────────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+        initTheme();
+        initSidebar();
+        initGlobalSearch();
+        initProdutos();
+        initLogs();
+        initUsers();
+        initSettings();
+
+        sectionLoaders.dashboard = loadDashboard;
+        sectionLoaders.historico = loadHistorico;
+        sectionLoaders.produtos = loadProdutos;
+        sectionLoaders.scrapers = loadScrapers;
+        sectionLoaders.logs = loadLogs;
+        sectionLoaders.usuarios = loadUsers;
+        sectionLoaders.configuracoes = loadSettings;
+
+        document.getElementById('refreshDashboard')?.addEventListener('click', () => loadDashboard());
+
+        initNavigation();
+    });
+})();

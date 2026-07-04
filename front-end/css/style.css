@@ -572,21 +572,6 @@ html[data-theme="dark"] .badge-cache {
     text-align: center;
 }
 
-/* Estrutura 3D decorativa flutuante (WebGL) — reforça o tema "3D" da página
-   sem competir com o conteúdo; escondida em telas menores. */
-.hero3d-canvas {
-    display: flex;
-    position: absolute;
-    top: 60px;
-    width: 240px;
-    height: 240px;
-    pointer-events: none;
-    opacity: .95;
-}
-@media (max-width: 1180px) {
-    .hero3d-canvas { display: none; }
-}
-
 .hero__title {
     font-family: var(--font-display);
     font-size: clamp(2.4rem, 5vw, 3.75rem);
@@ -1204,7 +1189,6 @@ html[data-theme="dark"] .badge-cache {
 .product-card__add-cart:hover {
     background: var(--sky-pale);
     border-color: var(--sky);
-    transform: translateY(-1px);
 }
 .product-card__add-cart.added {
     background: #EEF7F3;
@@ -1219,8 +1203,8 @@ html[data-theme="dark"] .badge-cache {
     bottom: 28px;
     left: 50%;
     transform: translate(-50%, 16px);
-    background: var(--text);
-    color: #fff;
+    background: #F7F6F4;
+    color: #1E2333;
     padding: 13px 22px;
     border-radius: 999px;
     font-size: .86rem;
@@ -1247,6 +1231,7 @@ html[data-theme="dark"] .badge-cache {
 }
 
 html[data-theme="dark"] .cart-toast__icon { background: var(--success); }
+html[data-theme="dark"] #cart-toast { background: #0B1020; color: #F8FAFC; }
 /* cart-item__remove usa #FEF0F3 (tom rosa claro hardcoded) — no dark mode isso
    seria um blob claro discrepante; troca por um vermelho translúcido. */
 html[data-theme="dark"] .cart-item__remove:hover { background: rgba(248,113,113,.14); }

@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/auth.php';
 logoutUser();
-header('Location: index.php');
+header('Location: ../front-end/index.php');
 exit;
 
 // logout

@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/../back-end/includes/auth.php';
 requireLogin();
 $user    = currentUser();
 $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
@@ -298,7 +298,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 
         /* Hover do card inteiro (efeito mais sutil, "aquece" o botão mesmo
            quando o cursor está em outra parte do card). */
-        .product-card:hover .product-card__cta {
+        .product-card:hover {
             background: var(--sky-pale);
             border-color: var(--sky);
         }
@@ -310,10 +310,9 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
            botão tem um destaque mais forte e visível (preenchimento sólido
            em --indigo), deixando claro que é um elemento clicável distinto. */
         .product-card__cta:hover {
-            background: var(--indigo);
+            background: var(--sky-pale);
             border-color: var(--indigo);
-            color: var(--white);
-            transform: translateY(-1px);
+            color: var(--black);
         }
 
         @keyframes productIn {
@@ -562,7 +561,6 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 
     <!-- ── Hero ──────────────────────────────────────────────────────────────── -->
     <main class="hero">
-        <canvas class="hero3d-canvas" id="hero3d-canvas" aria-hidden="true"></canvas>
         <h1 class="hero__title">
             O que você quer<br>
             <em>comprar hoje?</em>
@@ -758,7 +756,7 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
     try {
         const fd = new FormData();
         fd.append('action', 'logout');
-        const res  = await fetch('api.php', { method: 'POST', body: fd });
+        const res  = await fetch('../back-end/api.php', { method: 'POST', body: fd });
         const json = await res.json();
         if (json.success) window.location.href = json.redirect;
     } catch {
@@ -1069,14 +1067,23 @@ cartViewAllBtn.addEventListener('click', () => {
     const all = Cart.getAll();
     if (all.length === 0) return;
 
+    if (all.length > 10) {
+        const confirmar = window.confirm(
+            `Há mais de 10 itens no carrinho (${all.length}), tem certeza que quer abrir essas páginas?`
+        );
+        if (!confirmar) return;
+    }
+
     // Pop-up blockers costumam bloquear múltiplas chamadas de window.open em sequência.
     // Abrimos o primeiro link diretamente (gesto do usuário) e avisamos sobre o restante.
-    all.forEach((item, i) => {
+    let bloqueadas = 0;
+    all.forEach((item) => {
         const win = window.open(item.url, '_blank', 'noopener,noreferrer');
-        if (!win && i > 0) {
-            showToast('Seu navegador bloqueou algumas abas. Permita pop-ups para abrir todos os produtos.');
-        }
+        if (!win) bloqueadas++;
     });
+    if (bloqueadas > 0) {
+        showToast(`Seu navegador bloqueou ${bloqueadas} aba${bloqueadas > 1 ? 's' : ''}. Permita pop-ups para abrir todos os produtos.`);
+    }
 });
 
 cartClearBtn.addEventListener('click', () => {
@@ -1297,7 +1304,7 @@ async function realizarBusca() {
         fd.append('action', 'search');
         fd.append('busca', termo);
 
-        const res  = await fetch('api.php', { method: 'POST', body: fd });
+        const res  = await fetch('../back-end/api.php', { method: 'POST', body: fd });
         const json = await res.json();
 
         if (json.success) {

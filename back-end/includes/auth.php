@@ -14,12 +14,28 @@ function requireLogin(): void {
     }
 }
 
+function isAdmin(): bool {
+    return isLoggedIn() && ($_SESSION['user_role'] ?? 'user') === 'admin';
+}
+
+function requireAdmin(): void {
+    if (!isLoggedIn()) {
+        header('Location: index.php');
+        exit;
+    }
+    if (!isAdmin()) {
+        header('Location: home.php');
+        exit;
+    }
+}
+
 function currentUser(): array|null {
     if (!isLoggedIn()) return null;
     return [
         'id'    => $_SESSION['user_id'],
         'name'  => $_SESSION['user_name'],
         'email' => $_SESSION['user_email'],
+        'role'  => $_SESSION['user_role'] ?? 'user',
     ];
 }
 
@@ -28,6 +44,7 @@ function loginUser(array $user): void {
     $_SESSION['user_id']    = $user['id'];
     $_SESSION['user_name']  = $user['name'];
     $_SESSION['user_email'] = $user['email'];
+    $_SESSION['user_role']  = $user['role'] ?? 'user';
 }
 
 function logoutUser(): void {

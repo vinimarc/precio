@@ -1,0 +1,9 @@
+[2026-07-04 19:58:02] INFO     | auth | Novo cadastro: vinimarc3010@gmail.com (promovido a admin, primeiro usuário).
+[2026-07-04 19:59:43] INFO     | scraper.search | Busca por "rtx 3060" concluída em 19.21s com 7 produtos.
+[2026-07-04 20:00:19] INFO     | scraper.search | Busca por "mousepad" concluída em 19.86s com 36 produtos.
+[2026-07-04 20:00:59] INFO     | scraper.search | Busca por "cadeira gamer" concluída em 11.9s com 36 produtos.
+[2026-07-04 20:09:55] INFO     | scraper.search | Busca por "rtx 3060" concluída em 4.16s com 7 produtos.
+[2026-07-04 20:16:19] INFO     | scraper.search | Busca por "rtx 3060" concluída em 4.45s com 7 produtos.
+[2026-07-04 20:24:31] INFO     | admin.profile | Perfil do administrador #1 atualizado.
+[2026-07-04 20:24:37] WARNING  | auth | Tentativa de login falhou para vinimarc3010@gmail.com.
+[2026-07-04 20:24:39] INFO     | auth | Login bem-sucedido: vinimarc3010@gmail.com.

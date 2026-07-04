@@ -857,3 +857,13 @@ html[data-theme="dark"] .log-row p { color: #e5e7eb; }
     .chart-wrap, .panel-wide .chart-wrap { min-height: 250px; }
     .table-actions { justify-content: flex-start; }
 }
+
+.empty-state {
+    grid-column: 1 / -1;
+    padding: 28px;
+    text-align: center;
+    color: var(--admin-muted);
+    background: var(--admin-surface);
+    border: 1px dashed var(--admin-border);
+    border-radius: 14px;
+}
