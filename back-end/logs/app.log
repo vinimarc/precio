@@ -7,3 +7,5 @@
 [2026-07-04 20:24:31] INFO     | admin.profile | Perfil do administrador #1 atualizado.
 [2026-07-04 20:24:37] WARNING  | auth | Tentativa de login falhou para vinimarc3010@gmail.com.
 [2026-07-04 20:24:39] INFO     | auth | Login bem-sucedido: vinimarc3010@gmail.com.
+[2026-07-04 20:28:21] WARNING  | auth | Tentativa de login falhou para vinimarc3010@gmail.com.
+[2026-07-04 20:28:24] INFO     | auth | Login bem-sucedido: vinimarc3010@gmail.com.
