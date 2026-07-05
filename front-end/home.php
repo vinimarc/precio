@@ -298,7 +298,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 
         /* Hover do card inteiro (efeito mais sutil, "aquece" o botão mesmo
            quando o cursor está em outra parte do card). */
-        .product-card:hover {
+        .product-card:hover .product-card__cta {
             background: var(--sky-pale);
             border-color: var(--sky);
         }
@@ -310,9 +310,10 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
            botão tem um destaque mais forte e visível (preenchimento sólido
            em --indigo), deixando claro que é um elemento clicável distinto. */
         .product-card__cta:hover {
-            background: var(--sky-pale);
+            background: var(--indigo);
             border-color: var(--indigo);
-            color: var(--black);
+            color: var(--white);
+            transform: translateY(-1px);
         }
 
         @keyframes productIn {
@@ -553,7 +554,11 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
                 <span class="cart-trigger__badge" id="cart-badge">0</span>
             </button>
             <button class="theme-toggle theme-toggle--inline" id="theme-toggle-home" aria-label="Alternar modo escuro">
-                <span class="theme-toggle__icon" id="theme-icon-home">🌙</span>
+                <span class="theme-toggle__icon" id="theme-icon-home">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                    </svg>
+                </span>
             </button>
             <button class="btn-logout" id="btn-logout">Sair</button>
         </div>
@@ -731,9 +736,13 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
     var btn  = document.getElementById('theme-toggle-home');
     var icon = document.getElementById('theme-icon-home');
     var KEY  = 'precio-theme';
+
+    var ICON_MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    var ICON_SUN  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+
     function applyTheme(theme) {
         root.dataset.theme = theme;
-        if (icon) icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+        if (icon) icon.innerHTML = theme === 'dark' ? ICON_SUN : ICON_MOON;
         if (btn)  btn.setAttribute('aria-label', theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro');
     }
     var stored    = localStorage.getItem(KEY);

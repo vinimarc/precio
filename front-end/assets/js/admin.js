@@ -522,17 +522,103 @@
         });
     }
 
+    // ── LOJAS VTEX ───────────────────────────────────────────────────────────
+    async function loadVtexStores() {
+        const body = document.getElementById('vtexBody');
+        if (!body) return;
+        body.innerHTML = '<tr><td colspan="4" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('vtex_stores_list');
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="4" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+        renderVtexStores(resp.data);
+    }
+
+    function renderVtexStores(lojas) {
+        const body = document.getElementById('vtexBody');
+        if (!body) return;
+        body.innerHTML = lojas.length ? lojas.map((l) => `
+            <tr>
+                <td><strong>${escapeHtml(l.nome)}</strong></td>
+                <td class="text-muted">${escapeHtml(l.dominio)}</td>
+                <td><span class="status-badge status-${l.ativo ? 'success' : 'neutral'}"><i></i>${l.ativo ? 'Ativa' : 'Pausada'}</span></td>
+                <td class="table-actions">
+                    <button class="btn btn-sm btn-soft" data-toggle-vtex="${l.id}">${l.ativo ? 'Pausar' : 'Ativar'}</button>
+                    <button class="btn btn-sm btn-soft-danger" data-remove-vtex="${l.id}"><i class="bi bi-trash"></i> Remover</button>
+                </td>
+            </tr>`).join('') : '<tr><td colspan="4" class="text-muted">Nenhuma loja VTEX cadastrada ainda.</td></tr>';
+    }
+
+    function initVtexStores() {
+        document.getElementById('vtexAddForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const nome = document.getElementById('vtexNome');
+            const dominio = document.getElementById('vtexDominio');
+            const resp = await callApi('vtex_store_add', { nome: nome.value, dominio: dominio.value });
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                nome.value = '';
+                dominio.value = '';
+                renderVtexStores(resp.data);
+            }
+        });
+
+        document.getElementById('vtexBody')?.addEventListener('click', (event) => {
+            const toggleBtn = event.target.closest('[data-toggle-vtex]');
+            if (toggleBtn) {
+                callApi('vtex_store_toggle', { id: toggleBtn.dataset.toggleVtex }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) renderVtexStores(resp.data);
+                });
+                return;
+            }
+            const removeBtn = event.target.closest('[data-remove-vtex]');
+            if (removeBtn) {
+                if (!confirm('Remover esta loja VTEX da busca?')) return;
+                callApi('vtex_store_remove', { id: removeBtn.dataset.removeVtex }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) renderVtexStores(resp.data);
+                });
+            }
+        });
+    }
+
     // ── CONFIGURAÇÕES ────────────────────────────────────────────────────────
     async function loadSettings() {
         const resp = await callApi('settings_get');
-        if (resp.success) document.getElementById('cacheTtlInput').value = resp.data.cache_ttl_minutes;
+        if (resp.success) {
+            document.getElementById('cacheTtlInput').value = resp.data.cache_ttl_minutes;
+            document.getElementById('meliClientId').value = resp.data.meli_client_id || '';
+            document.getElementById('meliClientSecret').value = '';
+            document.getElementById('meliClientSecret').placeholder = resp.data.meli_client_secret
+                ? 'Já configurado — deixe em branco para manter'
+                : 'Deixe em branco para manter o atual';
+        }
+        loadVtexStores();
     }
 
     function initSettings() {
         document.getElementById('settingsForm')?.addEventListener('submit', async (event) => {
             event.preventDefault();
-            const resp = await callApi('settings_update', { cache_ttl_minutes: document.getElementById('cacheTtlInput').value });
+            const resp = await callApi('settings_update', {
+                cache_ttl_minutes: document.getElementById('cacheTtlInput').value,
+                meli_client_id: document.getElementById('meliClientId').value,
+                meli_client_secret: document.getElementById('meliClientSecret').value || (await currentMeliSecret()),
+            });
             showToast(resp.message, !resp.success);
+        });
+
+        document.getElementById('meliForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const secretInput = document.getElementById('meliClientSecret');
+            const resp = await callApi('settings_update', {
+                cache_ttl_minutes: document.getElementById('cacheTtlInput').value,
+                meli_client_id: document.getElementById('meliClientId').value,
+                meli_client_secret: secretInput.value || (await currentMeliSecret()),
+            });
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                secretInput.value = '';
+                secretInput.placeholder = resp.data.meli_client_secret ? 'Já configurado — deixe em branco para manter' : 'Deixe em branco para manter o atual';
+            }
         });
 
         document.getElementById('profileForm')?.addEventListener('submit', async (event) => {
@@ -551,6 +637,14 @@
         });
     }
 
+    // Busca o client_secret atual salvo no servidor, para não apagá-lo sem
+    // querer quando o admin salva um dos dois formulários de Configurações
+    // sem preencher o campo de senha novamente.
+    async function currentMeliSecret() {
+        const resp = await callApi('settings_get');
+        return resp.success ? (resp.data.meli_client_secret || '') : '';
+    }
+
     // ── BOOT ─────────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
         initTheme();
@@ -560,6 +654,7 @@
         initLogs();
         initUsers();
         initSettings();
+        initVtexStores();
 
         sectionLoaders.dashboard = loadDashboard;
         sectionLoaders.historico = loadHistorico;

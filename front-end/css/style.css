@@ -309,8 +309,14 @@ html[data-theme="dark"] .cart-trigger.cart3d-ready { background: transparent; }
 }
 .theme-toggle__icon {
     width: 18px;
-    text-align: center;
-    font-size: .95rem;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.theme-toggle__icon svg {
+    width: 100%;
+    height: 100%;
 }
 
 html[data-theme="dark"] .bg-canvas {
@@ -414,6 +420,43 @@ html[data-theme="dark"] .alert.success { background: rgba(74,222,128,.12); borde
     border-color: var(--sky);
     background: var(--white);
     box-shadow: 0 0 0 3px rgba(123,167,216,.15);
+}
+
+/* Campo de senha com botão de mostrar/ocultar */
+.field__password {
+    position: relative;
+}
+.field__password input {
+    padding-right: 44px;
+}
+.password-toggle {
+    position: absolute;
+    top: 50%;
+    right: 5px;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: color .15s, background .15s;
+}
+.password-toggle svg {
+    width: 18px;
+    height: 18px;
+}
+.password-toggle:hover {
+    color: var(--sky);
+    background: rgba(123,167,216,.12);
+}
+.password-toggle:focus-visible {
+    outline: 2px solid var(--sky);
+    outline-offset: 1px;
 }
 
 /* Submit button */
@@ -1189,6 +1232,7 @@ html[data-theme="dark"] .badge-cache {
 .product-card__add-cart:hover {
     background: var(--sky-pale);
     border-color: var(--sky);
+    transform: translateY(-1px);
 }
 .product-card__add-cart.added {
     background: #EEF7F3;

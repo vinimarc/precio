@@ -143,6 +143,74 @@ function cacheGC(): void
     }
 }
 
+// ── MERCADO LIVRE: TOKEN DE APLICAÇÃO (OAuth client_credentials) ─────────────
+// Guardado fora de CACHE_DIR/*.json (que é varrido pelo cacheGC acima) para
+// não ser apagado junto com o cache de buscas — o token dura ~6h e tem seu
+// próprio controle de expiração.
+define('MELI_TOKEN_FILE', CACHE_DIR . '/tokens/meli_token.json');
+
+/**
+ * Retorna um access_token de aplicação do Mercado Livre, se houver
+ * client_id/client_secret configurados no painel admin (Configurações).
+ * Sem credenciais configuradas, retorna null e a busca segue usando o
+ * endpoint público sem autenticação (funciona, mas com limite de taxa menor).
+ */
+function getMeliAccessToken(): ?string
+{
+    $clientId     = trim((string) getSetting('meli_client_id'));
+    $clientSecret = trim((string) getSetting('meli_client_secret'));
+    if ($clientId === '' || $clientSecret === '') {
+        return null;
+    }
+
+    if (file_exists(MELI_TOKEN_FILE)) {
+        $cached = json_decode((string) @file_get_contents(MELI_TOKEN_FILE), true);
+        if (is_array($cached) && ($cached['expires_at'] ?? 0) > time() + 60 && ($cached['client_id'] ?? null) === $clientId) {
+            return $cached['access_token'];
+        }
+    }
+
+    $ch = curl_init('https://api.mercadolibre.com/oauth/token');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER  => true,
+        CURLOPT_POST            => true,
+        CURLOPT_POSTFIELDS      => http_build_query([
+            'grant_type'    => 'client_credentials',
+            'client_id'     => $clientId,
+            'client_secret' => $clientSecret,
+        ]),
+        CURLOPT_HTTPHEADER      => ['Content-Type: application/x-www-form-urlencoded', 'Accept: application/json'],
+        CURLOPT_CONNECTTIMEOUT  => 6,
+        CURLOPT_TIMEOUT         => 10,
+        CURLOPT_SSL_VERIFYPEER  => true,
+    ]);
+    $body   = curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($body === false || $status >= 400) {
+        logMsg('WARNING', 'mercadolivre', "Falha ao obter token de acesso do Mercado Livre (HTTP {$status}). A busca segue sem token (endpoint público).");
+        return null;
+    }
+
+    $decoded   = json_decode((string) $body, true);
+    $token     = $decoded['access_token'] ?? null;
+    $expiresIn = (int) ($decoded['expires_in'] ?? 0);
+    if (!$token) return null;
+
+    if (!is_dir(dirname(MELI_TOKEN_FILE))) {
+        @mkdir(dirname(MELI_TOKEN_FILE), 0755, true);
+        @file_put_contents(dirname(MELI_TOKEN_FILE) . '/.htaccess', "Deny from all\n");
+    }
+    @file_put_contents(MELI_TOKEN_FILE, json_encode([
+        'access_token' => $token,
+        'client_id'    => $clientId,
+        'expires_at'   => time() + max(60, $expiresIn - 120),
+    ]));
+
+    return $token;
+}
+
 // ── REQUISIÇÃO HTTP com cURL ──────────────────────────────────────────────────
 // Retorna handle cURL configurado (sem executar ainda — para uso com curl_multi)
 function buildCurlHandle(string $url, array $headers, string $postBody = '', string $method = 'GET')
@@ -204,6 +272,130 @@ function curlMultiExec(array $handles): array
 
     curl_multi_close($mh);
     return $results;
+}
+
+// ── LOJAS VTEX (API pública de catálogo) ─────────────────────────────────────
+// Várias redes brasileiras (Centauro, Fast Shop, Lojas Colombo, entre outras)
+// rodam na plataforma VTEX, que expõe um endpoint público de busca em JSON —
+// sem necessidade de chave de API. O admin cadastra essas lojas pelo painel
+// (Configurações → Lojas VTEX), informando um nome e o domínio do endpoint.
+// A lista em si (getVtexLojas) vive em includes/settings.php.
+
+/**
+ * Monta a URL de busca da API pública VTEX a partir do domínio cadastrado.
+ * Aceita tanto o domínio da própria loja (ex: www.centauro.com.br) quanto
+ * o domínio direto da VTEX (ex: centauro.vtexcommercestable.com.br) —
+ * ambos costumam expor o mesmo endpoint /api/catalog_system/pub/...
+ */
+function montarUrlBuscaVtex(string $dominio, string $query): string
+{
+    $dominio = trim($dominio);
+    $dominio = preg_replace('#^https?://#', '', $dominio);
+    $dominio = rtrim($dominio, '/');
+    return 'https://' . $dominio . '/api/catalog_system/pub/products/search?ft=' . rawurlencode($query) . '&_from=0&_to=29';
+}
+
+/**
+ * Interpreta a resposta JSON da API pública de catálogo VTEX.
+ */
+function parseVtexJson(string $body, int $status, string $nomeLoja): array
+{
+    if ($body === '' || $status === 0 || $status >= 400) {
+        return ['produtos' => [], 'aviso' => ''];
+    }
+
+    $decoded = json_decode($body, true);
+    if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
+        return ['produtos' => [], 'aviso' => ''];
+    }
+
+    $produtos = [];
+    foreach ($decoded as $item) {
+        if (!is_array($item)) continue;
+
+        $nome  = (string) ($item['productName'] ?? '');
+        $link  = (string) ($item['link'] ?? '');
+        $itens = $item['items'][0] ?? [];
+        $oferta = $itens['sellers'][0]['commertialOffer'] ?? null;
+
+        if ($nome === '' || $link === '' || !$oferta) continue;
+
+        $preco     = (float) ($oferta['Price'] ?? 0);
+        $precoOrig = (float) ($oferta['ListPrice'] ?? 0);
+        if ($preco <= 0) continue;
+        if ($precoOrig <= $preco) $precoOrig = 0;
+
+        $imagem = $itens['images'][0]['imageUrl'] ?? ($itens['images'][0]['imageUrl'] ?? '');
+        if ($imagem !== '') $imagem = str_replace('http://', 'https://', $imagem);
+
+        $produtos[] = [
+            'nome'       => $nome,
+            'sku'        => (string) ($item['productId'] ?? ''),
+            'preco'      => $preco,
+            'preco_orig' => $precoOrig ?: null,
+            'desconto'   => $precoOrig ? round((1 - $preco / $precoOrig) * 100, 1) : null,
+            'url'        => $link,
+            'imagem'     => $imagem,
+            'em_estoque' => (int) ($oferta['AvailableQuantity'] ?? 0) > 0,
+            'loja'       => $nomeLoja,
+        ];
+    }
+
+    return ['produtos' => $produtos, 'aviso' => ''];
+}
+
+// ── BUSCA MERCADO LIVRE (API pública, JSON) ──────────────────────────────────
+// Diferente das outras lojas, o Mercado Livre expõe uma API de busca oficial
+// que devolve JSON estruturado diretamente — não precisa de proxy Jina nem
+// de parsing de HTML/Markdown, então tende a ser a fonte mais estável.
+function parseMercadoLivreJson(string $body, int $status): array
+{
+    if ($body === '' || $status === 0) {
+        return ['produtos' => [], 'aviso' => ''];
+    }
+
+    if ($status === 401 || $status === 403) {
+        logMsg('WARNING', 'mercadolivre', "Acesso negado pela API do Mercado Livre (HTTP {$status}). Verifique client_id/client_secret em Configurações.");
+        return ['produtos' => [], 'aviso' => 'Mercado Livre indisponível no momento (credenciais/limite de requisições).'];
+    }
+    if ($status >= 400) {
+        return ['produtos' => [], 'aviso' => 'Mercado Livre indisponível no momento.'];
+    }
+
+    $decoded = json_decode($body, true);
+    if (json_last_error() !== JSON_ERROR_NONE || !isset($decoded['results']) || !is_array($decoded['results'])) {
+        return ['produtos' => [], 'aviso' => ''];
+    }
+
+    $produtos = [];
+    foreach ($decoded['results'] as $item) {
+        $preco     = (float) ($item['price'] ?? 0);
+        $precoOrig = isset($item['original_price']) ? (float) $item['original_price'] : null;
+        if ($precoOrig !== null && $precoOrig <= $preco) {
+            $precoOrig = null;
+        }
+
+        $imagem = (string) ($item['thumbnail'] ?? '');
+        if ($imagem !== '') {
+            // A API às vezes devolve a miniatura via http:// e em baixa resolução (...-I.jpg)
+            $imagem = str_replace('http://', 'https://', $imagem);
+            $imagem = preg_replace('/-I\.(jpg|jpeg|webp|png)$/i', '-O.$1', $imagem) ?? $imagem;
+        }
+
+        $produtos[] = [
+            'nome'       => (string) ($item['title'] ?? ''),
+            'sku'        => (string) ($item['id'] ?? ''),
+            'preco'      => $preco,
+            'preco_orig' => $precoOrig,
+            'desconto'   => ($precoOrig && $precoOrig > 0) ? round((1 - $preco / $precoOrig) * 100, 1) : null,
+            'url'        => (string) ($item['permalink'] ?? ''),
+            'imagem'     => $imagem,
+            'em_estoque' => (int) ($item['available_quantity'] ?? 0) > 0,
+            'loja'       => 'Mercado Livre',
+        ];
+    }
+
+    return ['produtos' => $produtos, 'aviso' => ''];
 }
 
 // ── BUSCA PICHAU (GraphQL) ────────────────────────────────────────────────────
@@ -542,10 +734,11 @@ function parseGenericLojaMarkdown(string $markdown, int $quantidade, string $dom
     return ['total' => count($produtos), 'produtos' => $produtos];
 }
 
-// ── BUSCA PARALELA NAS 5 LOJAS ────────────────────────────────────────────────
+// ── BUSCA PARALELA NAS LOJAS ──────────────────────────────────────────────────
 function buscarProdutosMultisite(string $query): array
 {
-    // 1. Monta os 3 handles cURL em paralelo (Pichau via GraphQL + KaBuM + Amazon via Jina)
+    // 1. Monta os handles cURL em paralelo (Pichau via GraphQL, Mercado Livre via
+    // API oficial, e KaBuM/Amazon/Magalu/Terabyte via proxy Jina)
     $graphql = <<<'GRAPHQL'
     query SearchProducts($search: String!, $pageSize: Int!) {
       products(search: $search, pageSize: $pageSize, sort: { relevance: DESC }) {
@@ -576,13 +769,35 @@ function buscarProdutosMultisite(string $query): array
         'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     ];
 
-    $handles = [
-        'pichau'   => buildCurlHandle('https://www.pichau.com.br/graphql', $pichauHeaders, $payload, 'POST'),
-        'kabum'    => buildCurlHandle('https://r.jina.ai/https://www.kabum.com.br/busca/' . rawurlencode($query), $jinaHeaders),
-        'amazon'   => buildCurlHandle('https://r.jina.ai/https://www.amazon.com.br/s?k=' . rawurlencode($query), $jinaHeaders),
-        'magalu'   => buildCurlHandle('https://r.jina.ai/https://www.magazineluiza.com.br/busca/' . rawurlencode($query) . '/', $jinaHeaders),
-        'terabyte' => buildCurlHandle('https://r.jina.ai/https://www.terabyteshop.com.br/busca?str=' . rawurlencode($query), $jinaHeaders),
+    // Mercado Livre tem API pública de busca (JSON direto, sem precisar de
+    // proxy/parsing de HTML). Um client_id/client_secret configurado no painel
+    // admin (Configurações) é opcional — sem ele, a busca usa o endpoint
+    // público mesmo assim, só que com um limite de requisições menor.
+    $meliToken   = getMeliAccessToken();
+    $meliHeaders = [
+        'Accept: application/json',
+        'User-Agent: Mozilla/5.0 (compatible; PrecioBot/1.0; +https://precio.local)',
     ];
+    if ($meliToken) {
+        $meliHeaders[] = 'Authorization: Bearer ' . $meliToken;
+    }
+
+    $handles = [
+        'pichau'       => buildCurlHandle('https://www.pichau.com.br/graphql', $pichauHeaders, $payload, 'POST'),
+        'mercadolivre' => buildCurlHandle('https://api.mercadolibre.com/sites/MLB/search?q=' . rawurlencode($query) . '&limit=30', $meliHeaders),
+        'kabum'        => buildCurlHandle('https://r.jina.ai/https://www.kabum.com.br/busca/' . rawurlencode($query), $jinaHeaders),
+        'amazon'       => buildCurlHandle('https://r.jina.ai/https://www.amazon.com.br/s?k=' . rawurlencode($query), $jinaHeaders),
+        'magalu'       => buildCurlHandle('https://r.jina.ai/https://www.magazineluiza.com.br/busca/' . rawurlencode($query) . '/', $jinaHeaders),
+        'terabyte'     => buildCurlHandle('https://r.jina.ai/https://www.terabyteshop.com.br/busca?str=' . rawurlencode($query), $jinaHeaders),
+    ];
+
+    // Lojas VTEX cadastradas pelo admin (Configurações → Lojas VTEX) entram
+    // dinamicamente na mesma leva de requisições paralelas.
+    $vtexHeaders = ['Accept: application/json', 'User-Agent: Mozilla/5.0 (compatible; PrecioBot/1.0)'];
+    $vtexLojas   = array_values(array_filter(getVtexLojas(), fn($l) => !empty($l['ativo']) && !empty($l['dominio'])));
+    foreach ($vtexLojas as $loja) {
+        $handles['vtex_' . $loja['id']] = buildCurlHandle(montarUrlBuscaVtex($loja['dominio'], $query), $vtexHeaders);
+    }
 
     // 2. Dispara todos em paralelo
     $responses = curlMultiExec($handles);
@@ -628,23 +843,36 @@ function buscarProdutosMultisite(string $query): array
         $pichauData = $fallback['produtos'] ?? [];
     }
 
-    // 4. Processa KaBuM, Amazon, Magazine Luiza e Terabyte Shop
+    // 4. Processa Mercado Livre, KaBuM, Amazon, Magazine Luiza, Terabyte Shop e lojas VTEX
+    $meliData     = parseMercadoLivreJson((string)($responses['mercadolivre']['body'] ?? ''), (int)($responses['mercadolivre']['status'] ?? 0));
     $kabumData    = parseKabumMarkdown((string)($responses['kabum']['body']    ?? ''), 30);
     $amazonData   = parseAmazonMarkdown((string)($responses['amazon']['body']  ?? ''), 30);
     $magaluData   = parseMagaluMarkdown((string)($responses['magalu']['body']  ?? ''), 30);
     $terabyteData = parseTerabyteMarkdown((string)($responses['terabyte']['body'] ?? ''), 30);
 
+    $vtexData = [];
+    foreach ($vtexLojas as $loja) {
+        $resp = $responses['vtex_' . $loja['id']] ?? ['body' => '', 'status' => 0];
+        $vtexData[] = parseVtexJson((string) $resp['body'], (int) $resp['status'], $loja['nome']);
+    }
+
     // 5. Junta e filtra por relevância
     $produtos = [];
     $avisos   = [];
 
-    foreach ([
+    $listasProdutos = [
         $pichauData,
+        $meliData['produtos']     ?? [],
         $kabumData['produtos']    ?? [],
         $amazonData['produtos']   ?? [],
         $magaluData['produtos']   ?? [],
         $terabyteData['produtos'] ?? [],
-    ] as $lista) {
+    ];
+    foreach ($vtexData as $dado) {
+        $listasProdutos[] = $dado['produtos'] ?? [];
+    }
+
+    foreach ($listasProdutos as $lista) {
         foreach ($lista as $produto) {
             if (produtoCombinaComBusca($produto, $query)) {
                 $produtos[] = $produto;
@@ -652,7 +880,7 @@ function buscarProdutosMultisite(string $query): array
         }
     }
 
-    foreach ([$kabumData, $amazonData, $magaluData, $terabyteData] as $fonte) {
+    foreach (array_merge([$meliData, $kabumData, $amazonData, $magaluData, $terabyteData], $vtexData) as $fonte) {
         if (!empty($fonte['aviso'])) $avisos[] = $fonte['aviso'];
     }
 
@@ -665,10 +893,19 @@ function buscarProdutosMultisite(string $query): array
         $lojas[$loja] = ($lojas[$loja] ?? 0) + 1;
     }
 
+    // Rótulo "fonte" montado dinamicamente, incluindo as lojas VTEX cadastradas
+    $nomesFontes = array_merge(
+        ['Pichau', 'Mercado Livre', 'KaBuM!', 'Amazon', 'Magazine Luiza', 'Terabyte Shop'],
+        array_map(fn($l) => $l['nome'], $vtexLojas)
+    );
+    $fonteLabel = count($nomesFontes) > 1
+        ? implode(', ', array_slice($nomesFontes, 0, -1)) . ' e ' . end($nomesFontes)
+        : ($nomesFontes[0] ?? '');
+
     return [
         'total'   => count($produtos),
         'produtos' => $produtos,
-        'fonte'   => 'Pichau, KaBuM!, Amazon, Magazine Luiza e Terabyte Shop',
+        'fonte'   => $fonteLabel,
         'lojas'   => $lojas,
         'aviso'   => $avisos ? implode(' ', array_unique($avisos)) : '',
     ];

@@ -114,7 +114,15 @@ if (isLoggedIn()) {
                 </div>
                 <div class="field">
                     <label for="login-password">Senha</label>
-                    <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+                    <div class="field__password">
+                        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+                        <button type="button" class="password-toggle" data-toggle-password="login-password" aria-label="Mostrar senha" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
 
                 <button class="btn-primary" id="btn-login">Entrar</button>
@@ -137,11 +145,27 @@ if (isLoggedIn()) {
                 </div>
                 <div class="field">
                     <label for="reg-password">Senha</label>
-                    <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                    <div class="field__password">
+                        <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                        <button type="button" class="password-toggle" data-toggle-password="reg-password" aria-label="Mostrar senha" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="field">
                     <label for="reg-confirm">Confirmar senha</label>
-                    <input type="password" id="reg-confirm" placeholder="••••••••" autocomplete="new-password">
+                    <div class="field__password">
+                        <input type="password" id="reg-confirm" placeholder="••••••••" autocomplete="new-password">
+                        <button type="button" class="password-toggle" data-toggle-password="reg-confirm" aria-label="Mostrar senha" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
 
                 <button class="btn-primary" id="btn-register">Criar conta</button>
@@ -244,6 +268,24 @@ document.getElementById('login-password').addEventListener('keydown', e => {
 document.getElementById('reg-confirm').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('btn-register').click();
 });
+
+// ── Mostrar/ocultar senha ─────────────────────────────────────────────────────
+(function() {
+    var ICON_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    var ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.61 21.61 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.6 21.6 0 0 1-3.22 4.53M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+    document.querySelectorAll('[data-toggle-password]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var input = document.getElementById(btn.dataset.togglePassword);
+            if (!input) return;
+            var showing = input.type === 'text';
+            input.type = showing ? 'password' : 'text';
+            btn.setAttribute('aria-pressed', String(!showing));
+            btn.setAttribute('aria-label', showing ? 'Mostrar senha' : 'Ocultar senha');
+            btn.innerHTML = showing ? ICON_EYE : ICON_EYE_OFF;
+        });
+    });
+})();
 
 // Dark Mode sync
 (function() {

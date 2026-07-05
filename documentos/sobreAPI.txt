@@ -135,7 +135,7 @@ Destrói a sessão atual. Sem parâmetros.
 
 ### `action=search` 🔒 requer login
 
-Busca um produto em cinco varejistas brasileiros em paralelo e retorna uma lista mesclada, ordenada por preço.
+Busca um produto em seis varejistas brasileiros em paralelo e retorna uma lista mesclada, ordenada por preço.
 
 | Campo | Tipo | Obrigatório | Observações |
 |---|---|---|---|
@@ -175,7 +175,7 @@ Busca um produto em cinco varejistas brasileiros em paralelo e retorna uma lista
         "loja": "Pichau"
       }
     ],
-    "fonte": "Pichau, KaBuM!, Amazon, Magazine Luiza e Terabyte Shop",
+    "fonte": "Pichau, Mercado Livre, KaBuM!, Amazon, Magazine Luiza e Terabyte Shop",
     "lojas": { "Pichau": 6, "KaBuM!": 9, "Amazon": 4 },
     "aviso": ""
   }
@@ -204,12 +204,28 @@ Busca um produto em cinco varejistas brasileiros em paralelo e retorna uma lista
 | `url` | string | URL direta do produto no site do varejista |
 | `imagem` | string | URL da imagem do produto |
 | `em_estoque` | bool | Se o item está em estoque (assume `true` por padrão para fontes obtidas via scraping que não expõem status de estoque) |
-| `loja` | string | Um dos valores: `"Pichau"`, `"KaBuM!"`, `"Amazon"`, `"Magazine Luiza"`, `"Terabyte Shop"` |
+| `loja` | string | Um dos valores: `"Pichau"`, `"Mercado Livre"`, `"KaBuM!"`, `"Amazon"`, `"Magazine Luiza"`, `"Terabyte Shop"` |
+
+#### Sobre a origem dos dados do Mercado Livre
+
+Diferente das outras lojas, o Mercado Livre não é obtido via proxy/parsing de HTML — é consultado diretamente pela **API pública oficial** (`GET https://api.mercadolibre.com/sites/MLB/search`), que devolve JSON estruturado. Isso torna essa fonte a mais estável e menos sujeita a quebrar com mudanças de layout.
+
+Um `client_id`/`client_secret` (gerados em [developers.mercadolivre.com.br](https://developers.mercadolivre.com.br)) podem ser configurados no painel admin (Configurações). Com eles, o back-end obtém um token de aplicação via OAuth `client_credentials` (cacheado por ~6h) e o envia como `Authorization: Bearer`, elevando o limite de requisições. Sem credenciais, a busca funciona do mesmo jeito usando o endpoint público sem autenticação, só que com um limite de requisições por IP mais baixo.
 
 #### Observações sobre o comportamento da busca
 
 - **Cache:** os resultados ficam em cache em arquivo por 10 minutos, indexados pelo termo de busca em minúsculas. Um acerto de cache (cache hit) retorna instantaneamente com `do_cache: true` e pula toda a etapa de scraping externo. Apenas buscas bem-sucedidas com pelo menos um produto são armazenadas em cache — resultados vazios nunca são cacheados, então uma busca sem retorno tenta de novo do zero na próxima vez.
-- **Origem dos dados:** a Pichau é consultada primeiro via sua API GraphQL; se isso falhar ou for bloqueado (desafio do Cloudflare, resposta de erro), o sistema recorre a um scraping via proxy do Jina Reader. KaBuM!, Amazon, Magazine Luiza e Terabyte Shop são sempre obtidos via proxy do Jina Reader e interpretados a partir do Markdown retornado.
+- **Origem dos dados:** a Pichau é consultada primeiro via sua API GraphQL; se isso falhar ou for bloqueado (desafio do Cloudflare, resposta de erro), o sistema recorre a um scraping via proxy do Jina Reader. O Mercado Livre e as lojas VTEX cadastradas (ver abaixo) são consultados diretamente via suas APIs públicas (JSON, sem proxy). KaBuM!, Amazon, Magazine Luiza e Terabyte Shop são sempre obtidos via proxy do Jina Reader e interpretados a partir do Markdown retornado.
+
+#### Lojas VTEX (opcional, configurável pelo painel admin)
+
+Redes que rodam na plataforma VTEX (ex.: Centauro, Fast Shop, Lojas Colombo) expõem um endpoint público de catálogo, sem necessidade de chave de API:
+
+```
+GET https://{dominio-da-loja}/api/catalog_system/pub/products/search?ft={termo}
+```
+
+Essas lojas são cadastradas dinamicamente pelo painel admin (Configurações → Lojas VTEX, informando nome + domínio) e entram automaticamente na mesma leva de requisições paralelas do `search`. O campo `fonte` da resposta é montado dinamicamente e passa a incluir o nome de cada loja VTEX ativa. Não há lista fixa de lojas VTEX no código — cabe ao administrador testar o domínio (`.../api/catalog_system/pub/products/search?ft=teste` deve responder com uma lista JSON) antes de cadastrar.
 - **Filtragem por relevância:** os resultados são filtrados em relação à busca usando correspondência de tokens e regras específicas por categoria (ex.: buscas por placa de vídeo excluem PCs prontos, monitores e teclados, a menos que a própria busca mencione esses termos).
 - **Teto de resultados:** até 36 produtos são retornados por busca, ordenados por preço crescente.
 - **Tempo:** `tempo` é a duração da busca no servidor, em segundos (float, arredondado a 2 casas decimais). Em um acerto de cache, esse valor reflete a duração da busca *original*, não o tempo (quase nulo) da consulta ao cache.

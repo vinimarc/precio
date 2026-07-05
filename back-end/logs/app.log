@@ -9,3 +9,16 @@
 [2026-07-04 20:24:39] INFO     | auth | Login bem-sucedido: vinimarc3010@gmail.com.
 [2026-07-04 20:28:21] WARNING  | auth | Tentativa de login falhou para vinimarc3010@gmail.com.
 [2026-07-04 20:28:24] INFO     | auth | Login bem-sucedido: vinimarc3010@gmail.com.
+[2026-07-04 20:35:46] INFO     | auth | Login bem-sucedido: vinimarc3010@gmail.com.
+[2026-07-04 20:35:57] WARNING  | auth | Tentativa de login falhou para vinimarc3010@gmail.com.
+[2026-07-04 20:35:59] INFO     | auth | Login bem-sucedido: vinimarc3010@gmail.com.
+[2026-07-04 20:56:45] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-04 20:56:45] INFO     | scraper.search | Busca por "rtx 3060" concluída em 3.54s com 7 produtos.
+[2026-07-05 21:00:41] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-05 21:00:41] INFO     | scraper.search | Busca por "rtx 3060" concluída em 19.71s com 11 produtos.
+[2026-07-05 21:01:18] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-05 21:01:18] INFO     | scraper.search | Busca por "cadeira a" concluída em 19.57s com 36 produtos.
+[2026-07-05 21:01:36] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-05 21:01:36] INFO     | scraper.search | Busca por "cadeira gamer" concluída em 17.84s com 36 produtos.
+[2026-07-05 21:03:11] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-05 21:03:11] INFO     | scraper.search | Busca por "mouse gamer" concluída em 22.64s com 36 produtos.

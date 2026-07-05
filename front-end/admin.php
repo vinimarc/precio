@@ -237,6 +237,30 @@ $adminInitials = mb_strtoupper(mb_substr($adminName, 0, 1));
                         </form>
                     </article>
                     <article class="panel">
+                        <div class="panel-header"><div><h2>Mercado Livre</h2><p>Credenciais opcionais da API oficial (aumentam o limite de requisições)</p></div></div>
+                        <form class="form-stack" id="meliForm">
+                            <p class="text-muted small mb-0">Sem credenciais, a busca usa o endpoint público do Mercado Livre normalmente, só que com limite de requisições menor. Crie um app em <a href="https://developers.mercadolivre.com.br" target="_blank" rel="noopener">developers.mercadolivre.com.br</a> para gerar o Client ID e o Client Secret.</p>
+                            <label>Client ID<input class="form-control" type="text" id="meliClientId" placeholder="Ex: 1234567890123456" autocomplete="off"></label>
+                            <label>Client Secret<input class="form-control" type="password" id="meliClientSecret" placeholder="Deixe em branco para manter o atual" autocomplete="off"></label>
+                            <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> Salvar credenciais</button>
+                        </form>
+                    </article>
+                    <article class="panel panel-wide">
+                        <div class="panel-header"><div><h2>Lojas VTEX</h2><p>Lojas que rodam na plataforma VTEX expõem uma API pública de catálogo (sem chave). Cadastre aqui o nome de exibição e o domínio do endpoint.</p></div></div>
+                        <p class="text-muted small">Teste o domínio antes de cadastrar: abra <code>https://SEU-DOMINIO/api/catalog_system/pub/products/search?ft=teste</code> no navegador — se aparecer uma lista JSON de produtos, o domínio funciona. Tente primeiro o domínio da própria loja (ex: <code>www.centauro.com.br</code>).</p>
+                        <form class="vtex-add-form" id="vtexAddForm">
+                            <input class="form-control" type="text" id="vtexNome" placeholder="Nome da loja (ex: Centauro)" required>
+                            <input class="form-control" type="text" id="vtexDominio" placeholder="Domínio (ex: www.centauro.com.br)" required>
+                            <button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg"></i> Adicionar</button>
+                        </form>
+                        <div class="table-responsive mt-3">
+                            <table class="table admin-table align-middle">
+                                <thead><tr><th>Loja</th><th>Domínio</th><th>Status</th><th class="text-end">Ações</th></tr></thead>
+                                <tbody id="vtexBody"><tr><td colspan="4" class="text-muted">Carregando...</td></tr></tbody>
+                            </table>
+                        </div>
+                    </article>
+                    <article class="panel">
                         <div class="panel-header"><div><h2>Meu Perfil</h2><p>Dados da sua conta de administrador</p></div></div>
                         <form class="form-stack" id="profileForm">
                             <label>Nome<input class="form-control" type="text" id="profileName" value="<?= htmlspecialchars($adminName) ?>" required></label>

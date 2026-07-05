@@ -6,7 +6,10 @@ define('SETTINGS_FILE', __DIR__ . '/../config/settings.json');
 
 function settingsDefaults(): array {
     return [
-        'cache_ttl_minutes' => 10,
+        'cache_ttl_minutes'  => 10,
+        'meli_client_id'     => '',
+        'meli_client_secret' => '',
+        'vtex_lojas'         => [],
     ];
 }
 
@@ -27,6 +30,15 @@ function getSetting(string $key)
 {
     $settings = getSettings();
     return $settings[$key] ?? (settingsDefaults()[$key] ?? null);
+}
+
+/**
+ * Lista de lojas VTEX cadastradas pelo painel admin (Configurações → Lojas VTEX).
+ * Cada item: ['id' => int, 'nome' => string, 'dominio' => string, 'ativo' => bool].
+ */
+function getVtexLojas(): array {
+    $lojas = getSetting('vtex_lojas');
+    return is_array($lojas) ? $lojas : [];
 }
 
 function saveSettings(array $partial): array {

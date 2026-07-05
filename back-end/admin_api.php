@@ -356,6 +356,74 @@ if ($action === 'logs_clear') {
     exit;
 }
 
+// ── LOJAS VTEX ────────────────────────────────────────────────────────────────
+if ($action === 'vtex_stores_list') {
+    echo json_encode(['success' => true, 'data' => getVtexLojas()]);
+    exit;
+}
+
+if ($action === 'vtex_store_add') {
+    $nome    = trim((string) jsonInput('nome', ''));
+    $dominio = trim((string) jsonInput('dominio', ''));
+    $dominio = preg_replace('#^https?://#', '', $dominio);
+    $dominio = rtrim((string) $dominio, '/');
+
+    if (!$nome || !$dominio) {
+        echo json_encode(['success' => false, 'message' => 'Informe o nome da loja e o domínio da API.']);
+        exit;
+    }
+
+    $lojas = getVtexLojas();
+    $novoId = 1;
+    foreach ($lojas as $l) $novoId = max($novoId, ((int) $l['id']) + 1);
+
+    $lojas[] = ['id' => $novoId, 'nome' => $nome, 'dominio' => $dominio, 'ativo' => true];
+    saveSettings(['vtex_lojas' => $lojas]);
+
+    logMsg('INFO', 'admin.vtex', "Loja VTEX adicionada: {$nome} ({$dominio}).");
+    echo json_encode(['success' => true, 'message' => 'Loja adicionada com sucesso.', 'data' => $lojas]);
+    exit;
+}
+
+if ($action === 'vtex_store_toggle') {
+    $id = (int) jsonInput('id', 0);
+    $lojas = getVtexLojas();
+    $achou = false;
+    foreach ($lojas as &$l) {
+        if ((int) $l['id'] === $id) {
+            $l['ativo'] = empty($l['ativo']);
+            $achou = true;
+        }
+    }
+    unset($l);
+
+    if (!$achou) {
+        echo json_encode(['success' => false, 'message' => 'Loja não encontrada.']);
+        exit;
+    }
+
+    saveSettings(['vtex_lojas' => $lojas]);
+    logMsg('INFO', 'admin.vtex', "Loja VTEX #{$id} teve o status alternado.");
+    echo json_encode(['success' => true, 'message' => 'Status atualizado.', 'data' => $lojas]);
+    exit;
+}
+
+if ($action === 'vtex_store_remove') {
+    $id = (int) jsonInput('id', 0);
+    $lojas = getVtexLojas();
+    $restantes = array_values(array_filter($lojas, fn($l) => (int) $l['id'] !== $id));
+
+    if (count($restantes) === count($lojas)) {
+        echo json_encode(['success' => false, 'message' => 'Loja não encontrada.']);
+        exit;
+    }
+
+    saveSettings(['vtex_lojas' => $restantes]);
+    logMsg('WARNING', 'admin.vtex', "Loja VTEX #{$id} removida.");
+    echo json_encode(['success' => true, 'message' => 'Loja removida com sucesso.', 'data' => $restantes]);
+    exit;
+}
+
 // ── CONFIGURAÇÕES ─────────────────────────────────────────────────────────────
 if ($action === 'settings_get') {
     echo json_encode(['success' => true, 'data' => getSettings()]);
@@ -369,8 +437,15 @@ if ($action === 'settings_update') {
         exit;
     }
 
-    $updated = saveSettings(['cache_ttl_minutes' => $ttl]);
-    logMsg('INFO', 'admin.settings', "Tempo de cache atualizado para {$ttl} minutos.");
+    $meliClientId     = trim((string) jsonInput('meli_client_id', ''));
+    $meliClientSecret = trim((string) jsonInput('meli_client_secret', ''));
+
+    $updated = saveSettings([
+        'cache_ttl_minutes'  => $ttl,
+        'meli_client_id'     => $meliClientId,
+        'meli_client_secret' => $meliClientSecret,
+    ]);
+    logMsg('INFO', 'admin.settings', "Configurações atualizadas (cache: {$ttl} min, Mercado Livre: " . ($meliClientId !== '' ? 'credenciais definidas' : 'sem credenciais') . ').');
     echo json_encode(['success' => true, 'message' => 'Configurações salvas.', 'data' => $updated]);
     exit;
 }
