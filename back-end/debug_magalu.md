@@ -11,6 +11,6 @@ Por favor, tente novamente em 1 minuto.
 
 Se precisar, a gente pode te ajudar.
 
-ID: 0.88813217.1782952459.4553ad43
+ID: 0.8e813217.1783300376.3ba9467c
 
 [Falar com o Magalu](https://atendimento.magazineluiza.com.br/hc/pt-br/)

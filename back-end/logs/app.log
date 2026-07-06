@@ -22,3 +22,13 @@
 [2026-07-05 21:01:36] INFO     | scraper.search | Busca por "cadeira gamer" concluída em 17.84s com 36 produtos.
 [2026-07-05 21:03:11] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
 [2026-07-05 21:03:11] INFO     | scraper.search | Busca por "mouse gamer" concluída em 22.64s com 36 produtos.
+[2026-07-05 21:26:25] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-05 21:26:27] INFO     | scraper.search | Busca por "rtx 3060" concluída em 5.65s com 11 produtos.
+[2026-07-05 21:26:38] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-05 21:26:39] INFO     | scraper.search | Busca por "cadeira gamer" concluída em 5.02s com 36 produtos.
+[2026-07-06 02:59:34] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-06 02:59:35] INFO     | scraper.search | Busca por "rtx 3060" concluída em 23.09s com 7 produtos.
+[2026-07-06 03:04:57] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-06 03:05:00] INFO     | scraper.search | Busca por "cadeira gamer" concluída em 15.29s com 36 produtos.
+[2026-07-06 03:19:00] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
+[2026-07-06 03:19:01] INFO     | scraper.search | Busca por "rtx 3060" concluída em 4.3s com 7 produtos.

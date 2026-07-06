@@ -344,6 +344,23 @@ function parseVtexJson(string $body, int $status, string $nomeLoja): array
     return ['produtos' => $produtos, 'aviso' => ''];
 }
 
+// FALLBACK de Mercado Livre via Jina Reader (quando a API oficial sofre rate
+// limit). Assim como Magazine Luiza/Terabyte Shop, este parser foi escrito
+// sem acesso a uma resposta real do Jina Reader para lista.mercadolivre.com.br
+// — o ambiente onde este código foi gerado não tem acesso à internet para
+// testar. Ele reaproveita o parser genérico (parseGenericLojaMarkdown), já
+// calibrado para o formato "imagem → ruído → [nome](url) → preço" que o Jina
+// Reader costuma produzir, tentando os dois domínios de produto mais comuns
+// do Mercado Livre. Use test_scraper.php pra validar/ajustar contra uma
+// resposta real antes de confiar 100% neste fallback em produção.
+function parseMercadoLivreMarkdown(string $markdown, int $quantidade): array
+{
+    // Os dois domínios de produto mais comuns do Mercado Livre, casados numa
+    // única passada (ver comentário em parseLojaMarkdownComPadraoDominio).
+    $dominioPattern = '(?:https:\/\/www\.mercadolivre\.com\.br\/|https:\/\/produto\.mercadolivre\.com\.br\/)';
+    return parseLojaMarkdownComPadraoDominio($markdown, $quantidade, $dominioPattern, 'Mercado Livre');
+}
+
 // ── BUSCA MERCADO LIVRE (API pública, JSON) ──────────────────────────────────
 // Diferente das outras lojas, o Mercado Livre expõe uma API de busca oficial
 // que devolve JSON estruturado diretamente — não precisa de proxy Jina nem
@@ -356,10 +373,14 @@ function parseMercadoLivreJson(string $body, int $status): array
 
     if ($status === 401 || $status === 403) {
         logMsg('WARNING', 'mercadolivre', "Acesso negado pela API do Mercado Livre (HTTP {$status}). Verifique client_id/client_secret em Configurações.");
-        return ['produtos' => [], 'aviso' => 'Mercado Livre indisponível no momento (credenciais/limite de requisições).'];
+        return ['produtos' => [], 'aviso' => ''];
+    }
+    if ($status === 429) {
+        logMsg('WARNING', 'mercadolivre', 'Rate limit da API do Mercado Livre atingido (HTTP 429). Tentando fallback via scraping.');
+        return ['produtos' => [], 'aviso' => ''];
     }
     if ($status >= 400) {
-        return ['produtos' => [], 'aviso' => 'Mercado Livre indisponível no momento.'];
+        return ['produtos' => [], 'aviso' => ''];
     }
 
     $decoded = json_decode($body, true);
@@ -506,12 +527,13 @@ function buscarViaJina(string $targetUrl, string $loja, string $query, int $quan
     }
 
     return match($loja) {
-        'pichau'   => parsePichauMarkdown($markdown, $quantidade),
-        'kabum'    => parseKabumMarkdown($markdown, $quantidade),
-        'amazon'   => parseAmazonMarkdown($markdown, $quantidade),
-        'magalu'   => parseMagaluMarkdown($markdown, $quantidade),
-        'terabyte' => parseTerabyteMarkdown($markdown, $quantidade),
-        default    => ['total' => 0, 'produtos' => []],
+        'pichau'       => parsePichauMarkdown($markdown, $quantidade),
+        'mercadolivre' => parseMercadoLivreMarkdown($markdown, $quantidade),
+        'kabum'        => parseKabumMarkdown($markdown, $quantidade),
+        'amazon'       => parseAmazonMarkdown($markdown, $quantidade),
+        'magalu'       => parseMagaluMarkdown($markdown, $quantidade),
+        'terabyte'     => parseTerabyteMarkdown($markdown, $quantidade),
+        default        => ['total' => 0, 'produtos' => []],
     };
 }
 
@@ -671,16 +693,32 @@ function parseTerabyteMarkdown(string $markdown, int $quantidade): array
 // Mais tolerante que os parsers dedicados porque não conhecemos o HTML/markdown exato dessas lojas.
 function parseGenericLojaMarkdown(string $markdown, int $quantidade, string $dominioLoja, string $nomeLoja): array
 {
+    return parseLojaMarkdownComPadraoDominio($markdown, $quantidade, preg_quote($dominioLoja, '/'), $nomeLoja);
+}
+
+// Núcleo do parser genérico, mas aceitando um padrão de domínio já em forma de
+// regex (não escapado) — permite casar mais de um domínio de produto em uma
+// única passada (ex.: Mercado Livre usa tanto www.mercadolivre.com.br quanto
+// produto.mercadolivre.com.br).
+//
+// BUG FIX (calibrado contra uma resposta REAL da Terabyte Shop via Jina Reader):
+// a estrutura real não é "imagem -> ... -> [nome](url)" (dois links
+// separados) como a versão anterior assumia — é um ÚNICO link que embrulha
+// tudo: [![Image N](imgurl) Nome ★★★★★4.8(42) 🔥 em promoção Marca De: R$ X
+// R$ Y 12x R$ Z](url do produto). Isso é o mesmo formato que os parsers
+// dedicados de KaBuM!/Amazon já tratavam corretamente; este parser genérico
+// estava com um formato errado e por isso zerava os resultados de
+// Magazine Luiza/Terabyte/Mercado Livre sempre que a fonte principal falhava.
+function parseLojaMarkdownComPadraoDominio(string $markdown, int $quantidade, string $dominioPattern, string $nomeLoja): array
+{
     $produtos = [];
     $vistos   = [];
 
-    $dominioPattern = preg_quote($dominioLoja, '/');
-
-    // imagem -> até 600 chars de "ruído" (badges/avaliação/frete) -> [nome](url do produto na loja) -> até 400 chars (geralmente o preço)
+    // imagem -> texto (nome + rating + badges + preço), tudo dentro do mesmo
+    // link -> ](url do produto na loja)
     $pattern = '/!\[(?:Image\s*\d+)?[^\]]*\]\((https?:\/\/[^)\s]+?\.(?:jpg|jpeg|png|webp)[^)\s]*)\)'
-             . '(.{0,600}?)'
-             . '\[([^\[\]]{3,200})\]\((' . $dominioPattern . '[^)\s]+)\)'
-             . '(.{0,400}?)(?=!\[(?:Image\s*\d+)?|$)/su';
+             . '(.{0,700}?)'
+             . '\]\((' . $dominioPattern . '[^)\s]+)\)/su';
 
     if (!preg_match_all($pattern, $markdown, $matches, PREG_SET_ORDER)) {
         return ['total' => 0, 'produtos' => []];
@@ -690,42 +728,50 @@ function parseGenericLojaMarkdown(string $markdown, int $quantidade, string $dom
         if (count($produtos) >= $quantidade) break;
 
         $imagem = $match[1];
-        $nome   = trim(preg_replace('/\s+/u', ' ', $match[3]));
-        $url    = $match[4];
-        $cauda  = trim(preg_replace('/\s+/u', ' ', $match[5]));
+        $texto  = trim(preg_replace('/\s+/u', ' ', $match[2]));
+        $url    = $match[3];
 
-        if ($nome === '' || strlen($nome) > 220 || str_contains($nome, '](')) continue;
         if (isset($vistos[$url])) continue;
 
-        // O preço normalmente vem logo após o nome/link. Se não vier, tenta o
-        // texto entre a imagem e o link (caso o layout da loja seja invertido).
-        $trechoPreco = preg_split(
-            '/\s+(?:Entrega|Frete|Enviado|Apenas|Mais opções|Comprar|Em até|No PIX|À vista|ou\s+\d+x)\b/iu',
-            $cauda,
-            2
-        )[0] ?? $cauda;
+        $emEstoque = !preg_match('/\bESGOTADO\b/u', $texto);
 
-        if (!preg_match_all('/R\$ ?([\d\.,]+)/u', $trechoPreco, $precosMatch) || !$precosMatch[1]) {
-            $textoEntre = trim(preg_replace('/\s+/u', ' ', $match[2]));
-            if (!preg_match_all('/R\$ ?([\d\.,]+)/u', $textoEntre, $precosMatch) || !$precosMatch[1]) continue;
+        // O nome termina no primeiro marcador de rating/selo/preço.
+        $nome = trim(preg_split('/\s*(?:★|ESGOTADO\b|🔥|Frete Grátis|CUPOM|De:\s*R\$)/u', $texto, 2)[0] ?? $texto);
+        $nome = html_entity_decode($nome, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        if ($nome === '' || strlen($nome) > 220 || str_contains($nome, '](')) continue;
+
+        // Preço: formato "De: R$ ORIGINAL R$ ATUAL 12x R$ parcela" (Terabyte/Magalu).
+        $preco = null;
+        $precoOrig = null;
+        if (preg_match('/De:\s*R\$\s*([\d\.,]+)(?:\s+R\$\s*([\d\.,]+))?/u', $texto, $deMatch)) {
+            if (isset($deMatch[2]) && $deMatch[2] !== '') {
+                $precoOrig = moedaParaFloat($deMatch[1]);
+                $preco     = moedaParaFloat($deMatch[2]);
+            } else {
+                $preco = moedaParaFloat($deMatch[1]);
+            }
+        } elseif (preg_match_all('/R\$ ?([\d\.,]+)/u', $texto, $precosMatch) && $precosMatch[1]) {
+            // Fallback para lojas sem o rótulo "De:" (ex.: preço único, ou padrão diferente)
+            $valores   = $precosMatch[1];
+            $preco     = moedaParaFloat(end($valores));
+            $precoOrig = count($valores) > 1 ? moedaParaFloat($valores[0]) : null;
+        } else {
+            continue;
         }
 
-        $valores   = $precosMatch[1];
-        $preco     = moedaParaFloat(end($valores));
-        $precoOrig = count($valores) > 1 ? moedaParaFloat($valores[0]) : null;
-
-        if ($preco <= 0) continue;
+        if ($preco === null || $preco <= 0) continue;
+        if ($precoOrig !== null && $precoOrig <= $preco) $precoOrig = null;
 
         $vistos[$url] = true;
         $produtos[] = [
             'nome'       => $nome,
             'sku'        => '',
             'preco'      => $preco,
-            'preco_orig' => $precoOrig && $precoOrig != $preco ? $precoOrig : null,
+            'preco_orig' => $precoOrig,
             'desconto'   => null,
             'url'        => $url,
             'imagem'     => $imagem,
-            'em_estoque' => true,
+            'em_estoque' => $emEstoque,
             'loja'       => $nomeLoja,
         ];
     }
@@ -844,7 +890,51 @@ function buscarProdutosMultisite(string $query): array
     }
 
     // 4. Processa Mercado Livre, KaBuM, Amazon, Magazine Luiza, Terabyte Shop e lojas VTEX
-    $meliData     = parseMercadoLivreJson((string)($responses['mercadolivre']['body'] ?? ''), (int)($responses['mercadolivre']['status'] ?? 0));
+    $meliData = parseMercadoLivreJson((string)($responses['mercadolivre']['body'] ?? ''), (int)($responses['mercadolivre']['status'] ?? 0));
+
+    // Se a API oficial devolveu 429 (rate limit), tenta mais uma vez depois de
+    // uma pequena espera antes de desistir — na prática o rate limit do
+    // Mercado Livre costuma ser por uma janela curta, então uma segunda
+    // tentativa meio segundo depois às vezes já passa, sem precisar de
+    // scraping nenhum.
+    if (empty($meliData['produtos']) && (int) ($responses['mercadolivre']['status'] ?? 0) === 429) {
+        usleep(600000); // 0.6s
+        $retryHandle = buildCurlHandle(
+            'https://api.mercadolibre.com/sites/MLB/search?q=' . rawurlencode($query) . '&limit=30',
+            $meliHeaders
+        );
+        $retryResult = curlMultiExec(['mercadolivre' => $retryHandle]);
+        $meliData = parseMercadoLivreJson(
+            (string) ($retryResult['mercadolivre']['body'] ?? ''),
+            (int) ($retryResult['mercadolivre']['status'] ?? 0)
+        );
+        if (!empty($meliData['produtos'])) {
+            logMsg('INFO', 'mercadolivre', 'Rate limit recuperado após nova tentativa.');
+        }
+    }
+
+    // FALLBACK: quando a API oficial ainda assim não devolve nada, caímos
+    // para um scraping via Jina Reader da página pública de busca — mesma
+    // estratégia usada pra Pichau/KaBuM!/Amazon.
+    // LIMITAÇÃO CONHECIDA (confirmada em teste real em 05/07/2026): a página
+    // lista.mercadolivre.com.br costuma responder com um aviso de cookies /
+    // "Ocorreu um erro, tente novamente" para acessos automatizados (Jina
+    // Reader incluso), em vez do conteúdo real da busca — então este
+    // fallback pode não recuperar nada na prática até se achar uma URL/
+    // abordagem que escape desse muro de cookies. A prioridade real de
+    // disponibilidade do Mercado Livre continua sendo a API oficial acima.
+    if (empty($meliData['produtos'])) {
+        $meliFallback = buscarViaJina(
+            'https://lista.mercadolivre.com.br/' . rawurlencode(str_replace(' ', '-', normalizarTexto($query))),
+            'mercadolivre',
+            $query,
+            30
+        );
+        if (!empty($meliFallback['produtos'])) {
+            $meliData = ['produtos' => $meliFallback['produtos'], 'aviso' => 'Mercado Livre: resultados obtidos via fallback.'];
+        }
+    }
+
     $kabumData    = parseKabumMarkdown((string)($responses['kabum']['body']    ?? ''), 30);
     $amazonData   = parseAmazonMarkdown((string)($responses['amazon']['body']  ?? ''), 30);
     $magaluData   = parseMagaluMarkdown((string)($responses['magalu']['body']  ?? ''), 30);

@@ -212,10 +212,16 @@ Diferente das outras lojas, o Mercado Livre não é obtido via proxy/parsing de 
 
 Um `client_id`/`client_secret` (gerados em [developers.mercadolivre.com.br](https://developers.mercadolivre.com.br)) podem ser configurados no painel admin (Configurações). Com eles, o back-end obtém um token de aplicação via OAuth `client_credentials` (cacheado por ~6h) e o envia como `Authorization: Bearer`, elevando o limite de requisições. Sem credenciais, a busca funciona do mesmo jeito usando o endpoint público sem autenticação, só que com um limite de requisições por IP mais baixo.
 
+**Fallback contra rate limit:** quando a API oficial não devolve nenhum produto (rate limit HTTP 429, bloqueio temporário, etc.), o sistema cai automaticamente para um scraping via proxy Jina Reader da página pública de busca (`lista.mercadolivre.com.br`) — a mesma estratégia já usada para Pichau/KaBuM!/Amazon quando a fonte principal falha. Isso significa que mesmo sem `client_id`/`client_secret`, o Mercado Livre tende a continuar aparecendo nos resultados na maioria das buscas, só que com uma origem diferente por trás dos panos.
+
 #### Observações sobre o comportamento da busca
 
 - **Cache:** os resultados ficam em cache em arquivo por 10 minutos, indexados pelo termo de busca em minúsculas. Um acerto de cache (cache hit) retorna instantaneamente com `do_cache: true` e pula toda a etapa de scraping externo. Apenas buscas bem-sucedidas com pelo menos um produto são armazenadas em cache — resultados vazios nunca são cacheados, então uma busca sem retorno tenta de novo do zero na próxima vez.
 - **Origem dos dados:** a Pichau é consultada primeiro via sua API GraphQL; se isso falhar ou for bloqueado (desafio do Cloudflare, resposta de erro), o sistema recorre a um scraping via proxy do Jina Reader. O Mercado Livre e as lojas VTEX cadastradas (ver abaixo) são consultados diretamente via suas APIs públicas (JSON, sem proxy). KaBuM!, Amazon, Magazine Luiza e Terabyte Shop são sempre obtidos via proxy do Jina Reader e interpretados a partir do Markdown retornado.
+
+**Formato real confirmado (calibrado em 05/07/2026 com uma resposta real da Terabyte Shop):** o Jina Reader embrulha imagem + nome + avaliação + selos + preço num único link markdown — `[![Image N](url_imagem) Nome ★★★★★4.8(42) 🔥 em promoção Marca De: R$ ORIGINAL R$ ATUAL 12x R$ parcela](url_produto)` — não em dois links separados como uma versão anterior deste parser assumia. O parser genérico usado por Magazine Luiza, Terabyte Shop e pelo fallback do Mercado Livre foi corrigido e testado contra essa estrutura real (preço com/sem desconto, produtos esgotados com preço único, nomes sem avaliação, entidades HTML como `&quot;`).
+
+**Limitação conhecida — Magazine Luiza:** o WAF do Magalu costuma bloquear o IP do proxy Jina Reader com HTTP 403 ("Por favor, tente novamente em 1 minuto"), impedindo a coleta independentemente do parser estar correto. Isso não é um bug do parser — é um bloqueio anti-bot no lado do Magalu contra o próprio proxy. O sistema já trata esse caso sem quebrar (retorna 0 produtos dessa loja naquela busca).
 
 #### Lojas VTEX (opcional, configurável pelo painel admin)
 

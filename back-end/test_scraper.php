@@ -42,12 +42,22 @@ ob_end_clean();
 
 $loja  = $argv[1] ?? null;
 $busca = $argv[2] ?? null;
+$urlCustom = $argv[3] ?? null; // opcional: testa uma URL alternativa sem precisar mexer no código
 
-$lojasValidas = ['pichau', 'kabum', 'amazon', 'magalu', 'terabyte'];
+$lojasValidas = [
+    'pichau',
+    'kabum',
+    'amazon',
+    'magalu',
+    'terabyte',
+    'mercadolivre'
+];
 
 if (!$loja || !$busca || !in_array($loja, $lojasValidas, true)) {
-    echo "Uso: php test_scraper.php <loja> \"<termo de busca>\"\n";
+    echo "Uso: php test_scraper.php <loja> \"<termo de busca>\" [url_alternativa_opcional]\n";
     echo "Lojas válidas: " . implode(', ', $lojasValidas) . "\n";
+    echo "Exemplo testando uma URL alternativa para o Mercado Livre:\n";
+    echo "  php test_scraper.php mercadolivre \"rtx 4060\" \"https://www.mercadolivre.com.br/search?as_word=rtx+4060\"\n";
     exit(1);
 }
 
@@ -57,9 +67,10 @@ $urls = [
     'amazon'   => 'https://www.amazon.com.br/s?k=' . rawurlencode($busca),
     'magalu'   => 'https://www.magazineluiza.com.br/busca/' . rawurlencode($busca) . '/',
     'terabyte' => 'https://www.terabyteshop.com.br/busca?str=' . rawurlencode($busca),
+    'mercadolivre' => 'https://lista.mercadolivre.com.br/' . rawurlencode($busca),
 ];
 
-$readerUrl = 'https://r.jina.ai/' . $urls[$loja];
+$readerUrl = 'https://r.jina.ai/' . ($urlCustom ?: $urls[$loja]);
 echo "Buscando: $readerUrl\n";
 
 $headers = [
@@ -91,6 +102,7 @@ $parser = match ($loja) {
     'amazon'   => 'parseAmazonMarkdown',
     'magalu'   => 'parseMagaluMarkdown',
     'terabyte' => 'parseTerabyteMarkdown',
+    'mercadolivre' => 'parseMercadoLivreMarkdown',
 };
 
 $resultado = $parser($markdown, 30);
@@ -112,7 +124,33 @@ foreach (array_slice($produtos, 0, 3) as $i => $p) {
 }
 
 if (count($produtos) === 0) {
-    echo "\nNenhum produto extraído. Abra $debugFile e veja como o markdown real está\n";
-    echo "estruturado — se o padrão (imagem -> nome -> preço) for diferente do esperado,\n";
-    echo "me envie um trecho do arquivo que eu ajusto o regex em api.php.\n";
+    $sinaisDeBloqueio = [
+        'Usamos cookies para melhorar sua experiência' => 'muro de cookies (a página não chegou a mostrar resultados de busca)',
+        'Ocorreu um erro. Por favor, tente novamente'   => 'página de erro genérica do site (não é conteúdo de busca)',
+        'Erro 403'                                       => 'bloqueio 403 (anti-bot do site contra o proxy Jina Reader)',
+        'Forbidden'                                       => 'bloqueio 403 (anti-bot do site contra o proxy Jina Reader)',
+        'Robot or human'                                  => 'desafio anti-bot (captcha/challenge)',
+        'Just a moment'                                   => 'desafio do Cloudflare (captcha/challenge)',
+    ];
+
+    $diagnostico = null;
+    foreach ($sinaisDeBloqueio as $sinal => $explicacao) {
+        if (stripos($markdown, $sinal) !== false) {
+            $diagnostico = $explicacao;
+            break;
+        }
+    }
+
+    if ($diagnostico) {
+        echo "\nNenhum produto extraído — e não é problema de regex: o arquivo $debugFile\n";
+        echo "indica $diagnostico.\n";
+        echo "Ou seja, a página que o Jina Reader recebeu não tinha uma lista de produtos pra\n";
+        echo "extrair. Tentar ajustar o parser aqui não resolve — o que ajuda é uma URL ou\n";
+        echo "abordagem diferente. Você pode testar uma URL alternativa assim:\n";
+        echo "  php test_scraper.php $loja \"$busca\" \"https://outra-url-para-testar\"\n";
+    } else {
+        echo "\nNenhum produto extraído. Abra $debugFile e veja como o markdown real está\n";
+        echo "estruturado — se o padrão (imagem -> nome -> preço) for diferente do esperado,\n";
+        echo "me envie um trecho do arquivo que eu ajusto o regex em api.php.\n";
+    }
 }
