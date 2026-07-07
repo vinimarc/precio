@@ -33,6 +33,37 @@
         return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
 
+    function fmtDuration(ms) {
+        const n = Number(ms);
+        if (!Number.isFinite(n) || n <= 0) return '—';
+        if (n < 1000) return `${Math.round(n)} ms`;
+        return `${(n / 1000).toFixed(2)} s`;
+    }
+
+    /**
+     * Liga o clique nos cabeçalhos [data-sort] de uma tabela a um estado de
+     * ordenação (sort/dir), alternando asc/desc e recarregando os dados.
+     * Usado por Produtos, Categorias e Histórico de Pesquisas.
+     */
+    function initSortableTable(tableId, state, defaultSort, onChange) {
+        const table = document.getElementById(tableId);
+        if (!table) return;
+        state.sort = state.sort || defaultSort.sort;
+        state.dir = state.dir || defaultSort.dir;
+
+        table.querySelectorAll('thead th[data-sort]').forEach((th) => {
+            th.addEventListener('click', () => {
+                const column = th.dataset.sort;
+                state.dir = (state.sort === column && state.dir === 'ASC') ? 'DESC' : 'ASC';
+                state.sort = column;
+                state.page = 1;
+                table.querySelectorAll('thead th[data-sort]').forEach((el) => el.classList.remove('sorted-asc', 'sorted-desc'));
+                th.classList.add(state.dir === 'ASC' ? 'sorted-asc' : 'sorted-desc');
+                onChange();
+            });
+        });
+    }
+
     function escapeHtml(str) {
         const div = document.createElement('div');
         div.textContent = str ?? '';
@@ -217,15 +248,16 @@
             return;
         }
         const d = resp.data;
+        const ultimaBusca = d.ultima_busca_termo
+            ? `"${d.ultima_busca_termo}" — ${fmtDate(d.ultima_busca_data)}`
+            : 'Nenhuma ainda';
+
         const cards = [
-            ['Usuários Cadastrados', d.total_usuarios, 'bi-people'],
-            ['Administradores', d.total_admins, 'bi-shield-check'],
-            ['Pesquisas Hoje', d.buscas_hoje, 'bi-search'],
-            ['Pesquisas Totais', d.buscas_total, 'bi-graph-up-arrow'],
-            ['Produtos em Cache', d.produtos_cache, 'bi-box-seam'],
-            ['Lojas com Dados', d.lojas_ativas, 'bi-shop'],
-            ['Arquivos de Cache', d.cache_arquivos, 'bi-hdd-stack'],
-            ['Tamanho do Cache', `${d.cache_tamanho_kb} KB`, 'bi-database'],
+            ['Total de Buscas Realizadas', d.buscas_total, 'bi-search'],
+            ['Lojas Cadastradas', d.total_lojas, 'bi-shop'],
+            ['Produtos Monitorados', d.total_produtos, 'bi-box-seam'],
+            ['Tempo Médio das Buscas', fmtDuration(d.tempo_medio_ms), 'bi-stopwatch'],
+            ['Última Busca Realizada', ultimaBusca, 'bi-clock-history'],
         ];
         grid.innerHTML = cards.map(([label, value, icon]) => `
             <article class="metric-card">
@@ -246,30 +278,20 @@
             },
             options: baseChartOptions()
         }));
-
-        upsertChart('storesBarChart', () => ({
-            type: 'bar',
-            data: {
-                labels: d.chart_lojas.labels,
-                datasets: [{ label: 'Produtos', data: d.chart_lojas.values, backgroundColor: chartColors().success, borderRadius: 7 }]
-            },
-            options: baseChartOptions({ plugins: { legend: { display: false } } })
-        }));
-
-        const topBody = document.getElementById('topTermsBody');
-        topBody.innerHTML = d.top_termos.length
-            ? d.top_termos.map((t) => `<tr><td><strong>${escapeHtml(t.term)}</strong></td><td>${escapeHtml(String(t.total))}</td></tr>`).join('')
-            : '<tr><td colspan="2" class="text-muted">Nenhuma pesquisa registrada ainda.</td></tr>';
     }
 
     // ── HISTÓRICO ────────────────────────────────────────────────────────────
-    const historicoState = { page: 1, q: '' };
+    const historicoState = { page: 1, q: '', data_inicio: '', data_fim: '', sort: 'sl.created_at', dir: 'DESC' };
 
     async function loadHistorico() {
         const body = document.getElementById('historicoBody');
-        body.innerHTML = '<tr><td colspan="5" class="text-muted">Carregando...</td></tr>';
-        const resp = await callApi('searches_list', { page: historicoState.page, q: historicoState.q });
-        if (!resp.success) { body.innerHTML = '<tr><td colspan="5" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+        body.innerHTML = '<tr><td colspan="7" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('searches_list', {
+            page: historicoState.page, q: historicoState.q,
+            data_inicio: historicoState.data_inicio, data_fim: historicoState.data_fim,
+            sort: historicoState.sort, dir: historicoState.dir,
+        });
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="7" class="text-danger">Erro ao carregar.</td></tr>'; return; }
 
         body.innerHTML = resp.items.length ? resp.items.map((row) => `
             <tr>
@@ -277,10 +299,46 @@
                 <td>${escapeHtml(row.user_name || 'Anônimo')}</td>
                 <td><span class="status-badge status-${row.source === 'cache' ? 'neutral' : 'success'}"><i></i>${row.source === 'cache' ? 'Cache' : 'Ao vivo'}</span></td>
                 <td>${escapeHtml(String(row.results_count))}</td>
+                <td>${fmtDuration(row.duration_ms)}</td>
                 <td>${fmtDate(row.created_at)}</td>
-            </tr>`).join('') : '<tr><td colspan="5" class="text-muted">Nenhuma pesquisa encontrada.</td></tr>';
+                <td class="table-actions">
+                    <button class="btn btn-sm btn-soft-danger" data-delete-historico="${row.id}"><i class="bi bi-trash"></i> Excluir</button>
+                </td>
+            </tr>`).join('') : '<tr><td colspan="7" class="text-muted">Nenhuma pesquisa encontrada.</td></tr>';
 
         renderPagination(document.getElementById('historicoPagination'), historicoState, resp.total_pages, resp.total, loadHistorico);
+    }
+
+    function initHistorico() {
+        initSortableTable('historicoTable', historicoState, { sort: 'sl.created_at', dir: 'DESC' }, loadHistorico);
+
+        document.getElementById('historicoSearch')?.addEventListener('input', debounce((e) => {
+            historicoState.q = e.target.value.trim();
+            historicoState.page = 1;
+            loadHistorico();
+        }, 350));
+
+        document.getElementById('historicoDataInicio')?.addEventListener('change', (e) => {
+            historicoState.data_inicio = e.target.value;
+            historicoState.page = 1;
+            loadHistorico();
+        });
+
+        document.getElementById('historicoDataFim')?.addEventListener('change', (e) => {
+            historicoState.data_fim = e.target.value;
+            historicoState.page = 1;
+            loadHistorico();
+        });
+
+        document.getElementById('historicoBody')?.addEventListener('click', (event) => {
+            const delBtn = event.target.closest('[data-delete-historico]');
+            if (!delBtn) return;
+            if (!confirm('Excluir este registro do histórico permanentemente?')) return;
+            callApi('searches_delete', { id: delBtn.dataset.deleteHistorico }).then((resp) => {
+                showToast(resp.message, !resp.success);
+                if (resp.success) loadHistorico();
+            });
+        });
     }
 
     // ── PRODUTOS ─────────────────────────────────────────────────────────────
@@ -387,6 +445,319 @@
         document.getElementById('clearCacheBtn2')?.addEventListener('click', clearCache);
     }
 
+    // ── CATEGORIAS ───────────────────────────────────────────────────────────
+    const categoriasState = { page: 1, q: '', sort: 'c.nome', dir: 'ASC' };
+    let categoriaOptionsCache = null;
+
+    async function loadCategorias() {
+        const body = document.getElementById('categoriasBody');
+        body.innerHTML = '<tr><td colspan="5" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('categorias_list', {
+            page: categoriasState.page, q: categoriasState.q,
+            sort: categoriasState.sort, dir: categoriasState.dir,
+        });
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="5" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+
+        body.innerHTML = resp.items.length ? resp.items.map((c) => `
+            <tr>
+                <td><strong>${escapeHtml(c.nome)}</strong></td>
+                <td class="text-muted">${escapeHtml(c.slug)}</td>
+                <td>${escapeHtml(String(c.total_produtos))}</td>
+                <td><span class="status-badge status-${c.ativo ? 'success' : 'neutral'}"><i></i>${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
+                <td class="table-actions">
+                    <button class="btn btn-sm btn-soft" data-edit-categoria='${JSON.stringify(c).replace(/'/g, '&apos;')}'><i class="bi bi-pencil"></i> Editar</button>
+                    <button class="btn btn-sm btn-soft-danger" data-delete-categoria="${c.id}"><i class="bi bi-trash"></i> Excluir</button>
+                </td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-muted">Nenhuma categoria cadastrada ainda.</td></tr>';
+
+        renderPagination(document.getElementById('categoriasPagination'), categoriasState, resp.total_pages, resp.total, loadCategorias);
+        categoriaOptionsCache = null;
+        populateCategoriaOptions();
+    }
+
+    async function populateCategoriaOptions() {
+        if (!categoriaOptionsCache) {
+            const resp = await callApi('categorias_options');
+            categoriaOptionsCache = resp.success ? resp.data : [];
+        }
+        const filtro = document.getElementById('catalogoCategoriaFiltro');
+        const formSelect = document.getElementById('catalogProductCategoria');
+        if (filtro) {
+            const atual = filtro.value;
+            filtro.innerHTML = '<option value="">Todas as categorias</option>' + categoriaOptionsCache.map((c) => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+            filtro.value = atual;
+        }
+        if (formSelect) {
+            formSelect.innerHTML = '<option value="">Sem categoria</option>' + categoriaOptionsCache.map((c) => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+        }
+        return categoriaOptionsCache;
+    }
+
+    function openCategoriaModal(categoria) {
+        document.getElementById('categoriaModalTitle').textContent = categoria ? 'Editar categoria' : 'Nova categoria';
+        document.getElementById('categoriaId').value = categoria ? categoria.id : '';
+        document.getElementById('categoriaNome').value = categoria ? categoria.nome : '';
+        document.getElementById('categoriaSlug').value = categoria ? categoria.slug : '';
+        document.getElementById('categoriaAtivo').checked = categoria ? !!Number(categoria.ativo) : true;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('categoriaModal')).show();
+    }
+
+    function initCategorias() {
+        initSortableTable('categoriasTable', categoriasState, { sort: 'c.nome', dir: 'ASC' }, loadCategorias);
+
+        document.getElementById('categoriasSearch')?.addEventListener('input', debounce((e) => {
+            categoriasState.q = e.target.value.trim();
+            categoriasState.page = 1;
+            loadCategorias();
+        }, 350));
+
+        document.getElementById('newCategoriaBtn')?.addEventListener('click', () => openCategoriaModal(null));
+
+        document.getElementById('categoriasBody')?.addEventListener('click', (event) => {
+            const editBtn = event.target.closest('[data-edit-categoria]');
+            if (editBtn) {
+                openCategoriaModal(JSON.parse(editBtn.dataset.editCategoria.replace(/&apos;/g, "'")));
+                return;
+            }
+            const delBtn = event.target.closest('[data-delete-categoria]');
+            if (delBtn) {
+                if (!confirm('Excluir esta categoria permanentemente?')) return;
+                callApi('categorias_delete', { id: delBtn.dataset.deleteCategoria }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadCategorias();
+                });
+            }
+        });
+
+        document.getElementById('categoriaForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const id = document.getElementById('categoriaId').value;
+            const payload = {
+                nome: document.getElementById('categoriaNome').value,
+                slug: document.getElementById('categoriaSlug').value,
+                ativo: document.getElementById('categoriaAtivo').checked ? '1' : '0',
+            };
+            const resp = id
+                ? await callApi('categorias_update', { id, ...payload })
+                : await callApi('categorias_create', payload);
+
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                bootstrap.Modal.getInstance(document.getElementById('categoriaModal'))?.hide();
+                loadCategorias();
+            }
+        });
+    }
+
+    // ── LOJAS (cadastro real, usado no site e no scraping) ──────────────────
+    const lojasState = { page: 1, q: '' };
+
+    async function loadLojas() {
+        const body = document.getElementById('lojasBody');
+        body.innerHTML = '<tr><td colspan="5" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('lojas_list', { page: lojasState.page, q: lojasState.q });
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="5" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+
+        body.innerHTML = resp.items.length ? resp.items.map((l, idx) => `
+            <tr>
+                <td>
+                    <div class="order-controls">
+                        <button type="button" data-move-loja-up="${l.id}" ${idx === 0 ? 'disabled' : ''} title="Mover para cima"><i class="bi bi-arrow-up"></i></button>
+                        <button type="button" data-move-loja-down="${l.id}" ${idx === resp.items.length - 1 ? 'disabled' : ''} title="Mover para baixo"><i class="bi bi-arrow-down"></i></button>
+                    </div>
+                </td>
+                <td>${l.logo ? `<img class="product-thumb" src="${escapeHtml(l.logo)}" alt="" onerror="this.style.visibility='hidden'"> ` : ''}<strong>${escapeHtml(l.nome)}</strong></td>
+                <td><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener" class="text-muted">${escapeHtml(l.url)}</a></td>
+                <td><span class="status-badge status-${l.ativo ? 'success' : 'neutral'}"><i></i>${l.ativo ? 'Ativa' : 'Inativa'}</span></td>
+                <td class="table-actions">
+                    <button class="btn btn-sm btn-soft" data-toggle-loja="${l.id}">${l.ativo ? 'Desativar' : 'Ativar'}</button>
+                    <button class="btn btn-sm btn-soft" data-edit-loja='${JSON.stringify(l).replace(/'/g, '&apos;')}'><i class="bi bi-pencil"></i> Editar</button>
+                    <button class="btn btn-sm btn-soft-danger" data-delete-loja="${l.id}"><i class="bi bi-trash"></i> Excluir</button>
+                </td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-muted">Nenhuma loja cadastrada ainda.</td></tr>';
+
+        renderPagination(document.getElementById('lojasPagination'), lojasState, resp.total_pages, resp.total, loadLojas);
+    }
+
+    function openLojaModal(loja) {
+        document.getElementById('lojaModalTitle').textContent = loja ? 'Editar loja' : 'Nova loja';
+        document.getElementById('lojaId').value = loja ? loja.id : '';
+        document.getElementById('lojaNome').value = loja ? loja.nome : '';
+        document.getElementById('lojaUrl').value = loja ? loja.url : '';
+        document.getElementById('lojaLogo').value = loja ? (loja.logo || '') : '';
+        document.getElementById('lojaAtivo').checked = loja ? !!Number(loja.ativo) : true;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('lojaModal')).show();
+    }
+
+    function initLojas() {
+        document.getElementById('lojasSearch')?.addEventListener('input', debounce((e) => {
+            lojasState.q = e.target.value.trim();
+            lojasState.page = 1;
+            loadLojas();
+        }, 350));
+
+        document.getElementById('newLojaBtn')?.addEventListener('click', () => openLojaModal(null));
+
+        document.getElementById('lojasBody')?.addEventListener('click', (event) => {
+            const editBtn = event.target.closest('[data-edit-loja]');
+            if (editBtn) {
+                openLojaModal(JSON.parse(editBtn.dataset.editLoja.replace(/&apos;/g, "'")));
+                return;
+            }
+            const delBtn = event.target.closest('[data-delete-loja]');
+            if (delBtn) {
+                if (!confirm('Excluir esta loja permanentemente?')) return;
+                callApi('lojas_delete', { id: delBtn.dataset.deleteLoja }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadLojas();
+                });
+                return;
+            }
+            const toggleBtn = event.target.closest('[data-toggle-loja]');
+            if (toggleBtn) {
+                callApi('lojas_toggle', { id: toggleBtn.dataset.toggleLoja }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadLojas();
+                });
+                return;
+            }
+            const upBtn = event.target.closest('[data-move-loja-up]');
+            if (upBtn) {
+                callApi('lojas_move', { id: upBtn.dataset.moveLojaUp, direcao: 'up' }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadLojas();
+                });
+                return;
+            }
+            const downBtn = event.target.closest('[data-move-loja-down]');
+            if (downBtn) {
+                callApi('lojas_move', { id: downBtn.dataset.moveLojaDown, direcao: 'down' }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadLojas();
+                });
+            }
+        });
+
+        document.getElementById('lojaForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const id = document.getElementById('lojaId').value;
+            const payload = {
+                nome: document.getElementById('lojaNome').value,
+                url: document.getElementById('lojaUrl').value,
+                logo: document.getElementById('lojaLogo').value,
+                ativo: document.getElementById('lojaAtivo').checked ? '1' : '0',
+            };
+            const resp = id
+                ? await callApi('lojas_update', { id, ...payload })
+                : await callApi('lojas_create', payload);
+
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                bootstrap.Modal.getInstance(document.getElementById('lojaModal'))?.hide();
+                loadLojas();
+            }
+        });
+    }
+
+    // ── PRODUTOS (catálogo real em banco de dados) ──────────────────────────
+    const catalogoState = { page: 1, q: '', categoria_id: '', sort: 'p.created_at', dir: 'DESC' };
+
+    async function loadCatalogo() {
+        await populateCategoriaOptions();
+        const body = document.getElementById('catalogoBody');
+        body.innerHTML = '<tr><td colspan="6" class="text-muted">Carregando...</td></tr>';
+        const resp = await callApi('catalogo_list', {
+            page: catalogoState.page, q: catalogoState.q, categoria_id: catalogoState.categoria_id,
+            sort: catalogoState.sort, dir: catalogoState.dir,
+        });
+        if (!resp.success) { body.innerHTML = '<tr><td colspan="6" class="text-danger">Erro ao carregar.</td></tr>'; return; }
+
+        body.innerHTML = resp.items.length ? resp.items.map((p) => `
+            <tr>
+                <td>${p.imagem ? `<img class="product-thumb" src="${escapeHtml(p.imagem)}" alt="" onerror="this.style.visibility='hidden'">` : '<span class="text-muted">—</span>'}</td>
+                <td><strong>${escapeHtml(p.nome)}</strong></td>
+                <td>${p.categoria_nome ? escapeHtml(p.categoria_nome) : '<span class="text-muted">Sem categoria</span>'}</td>
+                <td><span class="status-badge status-${p.ativo ? 'success' : 'neutral'}"><i></i>${p.ativo ? 'Ativo' : 'Inativo'}</span></td>
+                <td>${fmtDate(p.updated_at)}</td>
+                <td class="table-actions">
+                    <button class="btn btn-sm btn-soft" data-edit-catalog='${JSON.stringify(p).replace(/'/g, '&apos;')}'><i class="bi bi-pencil"></i> Editar</button>
+                    <button class="btn btn-sm btn-soft-danger" data-delete-catalog="${p.id}"><i class="bi bi-trash"></i> Excluir</button>
+                </td>
+            </tr>`).join('') : '<tr><td colspan="6" class="text-muted">Nenhum produto cadastrado ainda.</td></tr>';
+
+        renderPagination(document.getElementById('catalogoPagination'), catalogoState, resp.total_pages, resp.total, loadCatalogo);
+    }
+
+    function openCatalogProductModal(produto) {
+        document.getElementById('catalogProductModalTitle').textContent = produto ? 'Editar produto' : 'Novo produto';
+        document.getElementById('catalogProductId').value = produto ? produto.id : '';
+        document.getElementById('catalogProductNome').value = produto ? produto.nome : '';
+        document.getElementById('catalogProductCategoria').value = produto && produto.categoria_id ? produto.categoria_id : '';
+        document.getElementById('catalogProductImagem').value = produto ? (produto.imagem || '') : '';
+        document.getElementById('catalogProductDescricao').value = produto ? (produto.descricao || '') : '';
+        document.getElementById('catalogProductAtivo').checked = produto ? !!Number(produto.ativo) : true;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('catalogProductModal')).show();
+    }
+
+    function initCatalogo() {
+        initSortableTable('catalogoTable', catalogoState, { sort: 'p.created_at', dir: 'DESC' }, loadCatalogo);
+
+        document.getElementById('catalogoSearch')?.addEventListener('input', debounce((e) => {
+            catalogoState.q = e.target.value.trim();
+            catalogoState.page = 1;
+            loadCatalogo();
+        }, 350));
+
+        document.getElementById('catalogoCategoriaFiltro')?.addEventListener('change', (e) => {
+            catalogoState.categoria_id = e.target.value;
+            catalogoState.page = 1;
+            loadCatalogo();
+        });
+
+        document.getElementById('newCatalogProductBtn')?.addEventListener('click', async () => {
+            await populateCategoriaOptions();
+            openCatalogProductModal(null);
+        });
+
+        document.getElementById('catalogoBody')?.addEventListener('click', async (event) => {
+            const editBtn = event.target.closest('[data-edit-catalog]');
+            if (editBtn) {
+                await populateCategoriaOptions();
+                openCatalogProductModal(JSON.parse(editBtn.dataset.editCatalog.replace(/&apos;/g, "'")));
+                return;
+            }
+            const delBtn = event.target.closest('[data-delete-catalog]');
+            if (delBtn) {
+                if (!confirm('Excluir este produto permanentemente?')) return;
+                callApi('catalogo_delete', { id: delBtn.dataset.deleteCatalog }).then((resp) => {
+                    showToast(resp.message, !resp.success);
+                    if (resp.success) loadCatalogo();
+                });
+            }
+        });
+
+        document.getElementById('catalogProductForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const id = document.getElementById('catalogProductId').value;
+            const payload = {
+                nome: document.getElementById('catalogProductNome').value,
+                categoria_id: document.getElementById('catalogProductCategoria').value,
+                imagem: document.getElementById('catalogProductImagem').value,
+                descricao: document.getElementById('catalogProductDescricao').value,
+                ativo: document.getElementById('catalogProductAtivo').checked ? '1' : '0',
+            };
+            const resp = id
+                ? await callApi('catalogo_update', { id, ...payload })
+                : await callApi('catalogo_create', payload);
+
+            showToast(resp.message, !resp.success);
+            if (resp.success) {
+                bootstrap.Modal.getInstance(document.getElementById('catalogProductModal'))?.hide();
+                loadCatalogo();
+            }
+        });
+    }
+
     // ── SCRAPERS (MONITORAMENTO) ────────────────────────────────────────────
     async function loadScrapers() {
         const body = document.getElementById('storesBody');
@@ -401,6 +772,39 @@
                 <td>${escapeHtml(String(s.em_estoque))}</td>
                 <td>${fmtDate(s.ultima_coleta)}</td>
             </tr>`).join('') : '<tr><td colspan="4" class="text-muted">Nenhum dado de coleta ainda. Faça uma busca no site.</td></tr>';
+
+        const overview = await callApi('scrapers_overview');
+        if (!overview.success) return;
+        const d = overview.data;
+
+        const grid = document.getElementById('scrapersStatsGrid');
+        if (grid) {
+            grid.innerHTML = [
+                ['Arquivos de Cache', d.cache_arquivos, 'bi-hdd-stack'],
+                ['Tamanho do Cache', `${d.cache_tamanho_kb} KB`, 'bi-database'],
+            ].map(([label, value, icon]) => `
+                <article class="metric-card">
+                    <div class="metric-icon"><i class="bi ${icon}"></i></div>
+                    <div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>
+                </article>
+            `).join('');
+        }
+
+        upsertChart('storesBarChart', () => ({
+            type: 'bar',
+            data: {
+                labels: d.chart_lojas.labels,
+                datasets: [{ label: 'Produtos', data: d.chart_lojas.values, backgroundColor: chartColors().success, borderRadius: 7 }]
+            },
+            options: baseChartOptions({ plugins: { legend: { display: false } } })
+        }));
+
+        const topBody = document.getElementById('topTermsBody');
+        if (topBody) {
+            topBody.innerHTML = d.top_termos.length
+                ? d.top_termos.map((t) => `<tr><td><strong>${escapeHtml(t.term)}</strong></td><td>${escapeHtml(String(t.total))}</td></tr>`).join('')
+                : '<tr><td colspan="2" class="text-muted">Nenhuma pesquisa registrada ainda.</td></tr>';
+        }
     }
 
     // ── LOGS ─────────────────────────────────────────────────────────────────
@@ -585,7 +989,13 @@
     async function loadSettings() {
         const resp = await callApi('settings_get');
         if (resp.success) {
+            document.getElementById('nomeSistemaInput').value = resp.data.nome_sistema;
+            document.getElementById('logoSistemaInput').value = resp.data.logo_sistema || '';
+            document.getElementById('maxResultadosInput').value = resp.data.max_resultados;
+            document.getElementById('statusSistemaInput').value = resp.data.status_sistema;
+
             document.getElementById('cacheTtlInput').value = resp.data.cache_ttl_minutes;
+
             document.getElementById('meliClientId').value = resp.data.meli_client_id || '';
             document.getElementById('meliClientSecret').value = '';
             document.getElementById('meliClientSecret').placeholder = resp.data.meli_client_secret
@@ -596,12 +1006,21 @@
     }
 
     function initSettings() {
+        document.getElementById('sistemaForm')?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const resp = await callApi('settings_update', {
+                nome_sistema: document.getElementById('nomeSistemaInput').value,
+                logo_sistema: document.getElementById('logoSistemaInput').value,
+                max_resultados: document.getElementById('maxResultadosInput').value,
+                status_sistema: document.getElementById('statusSistemaInput').value,
+            });
+            showToast(resp.message, !resp.success);
+        });
+
         document.getElementById('settingsForm')?.addEventListener('submit', async (event) => {
             event.preventDefault();
             const resp = await callApi('settings_update', {
                 cache_ttl_minutes: document.getElementById('cacheTtlInput').value,
-                meli_client_id: document.getElementById('meliClientId').value,
-                meli_client_secret: document.getElementById('meliClientSecret').value || (await currentMeliSecret()),
             });
             showToast(resp.message, !resp.success);
         });
@@ -610,9 +1029,8 @@
             event.preventDefault();
             const secretInput = document.getElementById('meliClientSecret');
             const resp = await callApi('settings_update', {
-                cache_ttl_minutes: document.getElementById('cacheTtlInput').value,
                 meli_client_id: document.getElementById('meliClientId').value,
-                meli_client_secret: secretInput.value || (await currentMeliSecret()),
+                meli_client_secret: secretInput.value,
             });
             showToast(resp.message, !resp.success);
             if (resp.success) {
@@ -637,19 +1055,15 @@
         });
     }
 
-    // Busca o client_secret atual salvo no servidor, para não apagá-lo sem
-    // querer quando o admin salva um dos dois formulários de Configurações
-    // sem preencher o campo de senha novamente.
-    async function currentMeliSecret() {
-        const resp = await callApi('settings_get');
-        return resp.success ? (resp.data.meli_client_secret || '') : '';
-    }
-
     // ── BOOT ─────────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
         initTheme();
         initSidebar();
         initGlobalSearch();
+        initHistorico();
+        initCategorias();
+        initLojas();
+        initCatalogo();
         initProdutos();
         initLogs();
         initUsers();
@@ -658,7 +1072,10 @@
 
         sectionLoaders.dashboard = loadDashboard;
         sectionLoaders.historico = loadHistorico;
-        sectionLoaders.produtos = loadProdutos;
+        sectionLoaders.produtos = loadCatalogo;
+        sectionLoaders.categorias = loadCategorias;
+        sectionLoaders.lojas = loadLojas;
+        sectionLoaders.cacheProdutos = loadProdutos;
         sectionLoaders.scrapers = loadScrapers;
         sectionLoaders.logs = loadLogs;
         sectionLoaders.usuarios = loadUsers;

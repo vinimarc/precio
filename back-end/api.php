@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/logger.php';
 require_once __DIR__ . '/includes/settings.php';
+require_once __DIR__ . '/includes/migrations.php';
 
 header('Content-Type: application/json');
 
@@ -1088,6 +1089,13 @@ if ($action === 'search') {
         exit;
     }
 
+    // Modo manutenção (Configurações → Sistema): bloqueia buscas de usuários
+    // comuns, mas continua liberado para administradores testarem o sistema.
+    if (getSetting('status_sistema') === 'manutencao' && !isAdmin()) {
+        echo json_encode(['success' => false, 'message' => 'O sistema está em manutenção no momento. Tente novamente mais tarde.']);
+        exit;
+    }
+
     $busca = trim($_POST['busca'] ?? '');
 
     if (mb_strlen($busca) < 2) {
@@ -1099,6 +1107,10 @@ if ($action === 'search') {
         exit;
     }
 
+    ensureSchema(getDB());
+    $maxResultados = (int) getSetting('max_resultados');
+    if ($maxResultados < 1) $maxResultados = 30;
+
     // Verifica cache
     $inicio   = microtime(true);
     $cacheKey = 'search_' . strtolower($busca);
@@ -1107,8 +1119,16 @@ if ($action === 'search') {
     if ($cached !== null) {
         // Cache hit: mede o tempo real desta requisição (leitura do cache),
         // em vez de reaproveitar o tempo da busca original que gerou o cache.
-        $tempoCache = round((microtime(true) - $inicio), 2);
-        registrarPesquisa($busca, count($cached['data']['produtos'] ?? []), 'cache');
+        $tempoCache   = round((microtime(true) - $inicio), 2);
+        $tempoCacheMs = (int) round((microtime(true) - $inicio) * 1000);
+
+        $produtosCache = $cached['data']['produtos'] ?? [];
+        if (count($produtosCache) > $maxResultados) {
+            $produtosCache = array_slice($produtosCache, 0, $maxResultados);
+            $cached['data']['produtos'] = $produtosCache;
+        }
+
+        registrarPesquisa($busca, count($produtosCache), 'cache', $tempoCacheMs);
         echo json_encode([
             'success'  => true,
             'data'     => $cached['data'],
@@ -1120,6 +1140,7 @@ if ($action === 'search') {
 
     $resultado = buscarProdutosMultisite($busca);
     $tempo     = round((microtime(true) - $inicio), 2);
+    $tempoMs   = (int) round((microtime(true) - $inicio) * 1000);
 
     if (isset($resultado['erro'])) {
         logMsg('ERROR', 'scraper.search', "Busca por \"{$busca}\" falhou: {$resultado['erro']}");
@@ -1127,12 +1148,17 @@ if ($action === 'search') {
         exit;
     }
 
+    // Aplica o limite máximo de resultados configurado no painel admin
+    if (!empty($resultado['produtos']) && count($resultado['produtos']) > $maxResultados) {
+        $resultado['produtos'] = array_slice($resultado['produtos'], 0, $maxResultados);
+    }
+
     // Salva no cache apenas se obteve resultados
     if (!empty($resultado['produtos'])) {
         cacheSet($cacheKey, ['data' => $resultado, 'tempo' => $tempo]);
     }
 
-    registrarPesquisa($busca, count($resultado['produtos'] ?? []), 'live');
+    registrarPesquisa($busca, count($resultado['produtos'] ?? []), 'live', $tempoMs);
     logMsg('INFO', 'scraper.search', "Busca por \"{$busca}\" concluída em {$tempo}s com " . count($resultado['produtos'] ?? []) . ' produtos.');
 
     echo json_encode([
@@ -1148,12 +1174,12 @@ if ($action === 'search') {
  * Grava uma pesquisa no histórico real (tabela search_log), usado
  * pelo painel administrativo. Falhas aqui nunca devem quebrar a busca.
  */
-function registrarPesquisa(string $termo, int $resultados, string $origem): void
+function registrarPesquisa(string $termo, int $resultados, string $origem, int $duracaoMs = 0): void
 {
     try {
         $db   = getDB();
-        $stmt = $db->prepare('INSERT INTO search_log (user_id, term, results_count, source) VALUES (?, ?, ?, ?)');
-        $stmt->execute([$_SESSION['user_id'] ?? null, mb_substr($termo, 0, 120), $resultados, $origem]);
+        $stmt = $db->prepare('INSERT INTO search_log (user_id, term, results_count, source, duration_ms) VALUES (?, ?, ?, ?, ?)');
+        $stmt->execute([$_SESSION['user_id'] ?? null, mb_substr($termo, 0, 120), $resultados, $origem, $duracaoMs]);
     } catch (\Throwable $e) {
         logMsg('WARNING', 'search_log', 'Não foi possível registrar o histórico de pesquisa: ' . $e->getMessage());
     }

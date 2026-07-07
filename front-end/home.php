@@ -589,7 +589,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
                     class="search-bar__input"
                     id="search-input"
                     type="text"
-                    placeholder="Ex: RTX 4060, Ryzen 5 7600, SSD NVMe…"
+                    placeholder="Ex: RTX 4060, Tênis, Mesa…"
                     autocomplete="off"
                     maxlength="120"
                 >
@@ -1139,7 +1139,7 @@ function mostrarLoading() {
             <div class="loading-panel">
                 <div>
                     <strong>Comparando lojas em paralelo</strong>
-                    <span>Pichau, KaBuM! e Amazon estão sendo consultadas agora.</span>
+                    <span> estão sendo consultadas agora.</span>
                 </div>
                 <div class="spinner"></div>
             </div>

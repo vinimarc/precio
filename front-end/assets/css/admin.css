@@ -656,6 +656,35 @@ a { text-decoration: none; }
     margin-bottom: 14px;
 }
 
+.toolbar-3 {
+    grid-template-columns: minmax(220px, 1fr) 170px 170px;
+}
+
+.nav-link-danger:hover, .nav-link-danger:hover i { color: #f87171; }
+
+.order-controls {
+    display: inline-flex;
+    gap: 4px;
+    margin-right: 8px;
+}
+
+.order-controls button {
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--admin-border);
+    border-radius: 6px;
+    background: var(--admin-surface-2);
+    color: var(--admin-text);
+    font-size: .75rem;
+    line-height: 1;
+}
+
+.order-controls button:hover { border-color: color-mix(in srgb, var(--admin-primary) 42%, var(--admin-border)); color: var(--admin-primary); }
+.order-controls button:disabled { opacity: .35; pointer-events: none; }
+
 .form-control, .form-select {
     border-color: var(--admin-border);
     border-radius: 8px;
