@@ -111,3 +111,4 @@
 [2026-07-07 17:40:02] INFO     | scraper.search | Busca por "67" concluída em 27.95s com 30 produtos.
 [2026-07-07 17:41:13] WARNING  | mercadolivre | Acesso negado pela API do Mercado Livre (HTTP 403). Verifique client_id/client_secret em Configurações.
 [2026-07-07 17:41:15] INFO     | scraper.search | Busca por "Tênis" concluída em 17.73s com 0 produtos.
+[2026-09-16 21:54:12] INFO     | auth | Novo cadastro: sonic@gmail.com (promovido a admin, primeiro usuário).
